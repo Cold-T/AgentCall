@@ -88,7 +88,7 @@ curl -H "Authorization: Bearer $AGENTCALL_TOKEN" \
 
 401 返回 WWW-Authenticate: Bearer（PIN 模式为 Basic）；业务 HTTP、SSE、OpenAPI / docs 和音频 WebSocket 均受认证保护。OpenAI / Gemini 凭据不返回客户端。认证后可读写非秘密服务配置，见 [网页设置与会话 API](web-ui.md)。真实 API 和真机兼容性验收边界见 checkpoint 验证记录。
 
-通话背景由后台永久提供，API 创建任务无需填写 `background`；该字段可用于附加资料，空值或自定义内容不会替换固定通话说明。PIN 即 API token，Bearer / Basic 客户端不需要先登录或换取其他 token。
+API 创建任务无需填写 `background`；省略时使用后台默认通话说明，显式填写时使用该内容替换说明，空字符串表示清空。网页预填写同一默认说明，允许修改；修改只影响本次通话。PIN 即 API token，Bearer / Basic 客户端不需要先登录或换取其他 token。
 
 ## 下载通话资料
 

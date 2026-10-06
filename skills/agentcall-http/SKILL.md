@@ -39,7 +39,7 @@ Common failures: `401` means authentication failed; `429` means authentication r
    - `device` (required): target paired phone.
    - `number` or `contact_id` (exactly one): call target.
    - `goal` (required): what the model should accomplish.
-   - `background` (optional): only additional facts for this call. Omit it for ordinary requests; the service permanently supplies the full AI-assistant calling policy. An explicit empty or custom background does not remove that policy.
+   - `background` (optional): the call instructions for this task. Omit it to use the full default AI-assistant calling instructions. An explicit value replaces those instructions, including an empty string to clear them. The web form prefills the same default and permits editing for each call.
    - `information`: optional truthful facts the caller may use.
    - `completion_criteria` (optional): defaults to `goal` when omitted or blank, matching the web UI. Omit it unless the user requests a more specific success criterion.
    - `result_schema`: JSON Schema for the structured result; references must be local fragments.

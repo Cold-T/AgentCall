@@ -148,7 +148,9 @@ async def verify(directory):
             await expect(page.get_by_role("tab")).to_have_count(3)
             await page.get_by_role("tab", name="发起通话").click()
             await expect(page.locator('#task-create [name="contact_id"] option')).to_have_count(2)
-            await expect(page.locator("#default-background")).to_contain_text("不要朗读任务说明")
+            assert "不要朗读任务说明" in await page.locator("#default-background").input_value()
+            await expect(page.locator("#default-background")).to_be_editable()
+            await page.locator("#default-background").fill("Use only the edited call instructions.")
             await expect(page.locator('#task-create [name="voice"]')).to_have_value("marin")
             await expect(page.locator('#task-create [name="voice"] option')).to_have_count(10)
             await page.locator('#task-create [name="voice"]').select_option("cedar")
@@ -165,6 +167,7 @@ async def verify(directory):
             await expect(page.locator("#task-status")).to_contain_text("排队中")
             tasks = [backend.store.task(i) for i in backend.store.task_ids()]
             created = next(t for t in tasks if t["input"]["goal"] == "Browser contact goal")
+            assert created["input"]["background"] == "Use only the edited call instructions."
             assert created["input"]["number"] == "12345"
             assert created["input"]["completion_criteria"] == "Browser contact goal"
             assert created["input"]["max_call_seconds"] == 120
@@ -190,13 +193,17 @@ async def verify(directory):
             )
             assert inherited["config"]["model"] == created["config"]["model"]
             assert created["config"]["options"]["transcription"]
+            assert "不要朗读任务说明" in await page.locator("#default-background").input_value()
+            await page.locator("#default-background").fill("")
             await page.locator('#task-create [name="number"]').fill("33333")
             await expect(page.locator('#task-create [name="contact_id"]')).to_have_value("")
             await page.locator('#task-create [name="goal"]').fill("Browser number goal")
             await page.locator("#start-call").click()
             await expect(page.locator('#task-create [name="goal"]')).to_have_value("")
             tasks = [backend.store.task(i) for i in backend.store.task_ids()]
-            assert any(t["input"]["number"] == "33333" for t in tasks)
+            assert any(
+                t["input"]["number"] == "33333" and t["input"]["background"] == "" for t in tasks
+            )
             assert not any(command.startswith("ATD") for command in phone.commands)
             await (
                 page.locator("#task-status").get_by_role("button", name="查看", exact=True).click()

@@ -24,13 +24,13 @@ from agentcall.tasks.models import DEFAULT_BACKGROUND, ProviderConfig, TaskInput
 
 
 @pytest.mark.parametrize("background", [None, "", "The office reference is ABC."])
-def test_permanent_background_applies_without_client_instructions(background):
+def test_background_defaults_only_when_omitted(background):
     body = {"device": DEVICE, "number": "12345", "goal": "Confirm office hours"}
     if background is not None:
         body["background"] = background
     task = TaskInput(**body)
     prompt = instructions({"input": task.model_dump(), "config": {"language": "English"}})
-    assert DEFAULT_BACKGROUND in prompt
+    assert (DEFAULT_BACKGROUND in prompt) == (background is None)
     assert "Confirm office hours" in prompt
     if background:
         assert background in prompt
@@ -38,7 +38,7 @@ def test_permanent_background_applies_without_client_instructions(background):
         assert task.background == (DEFAULT_BACKGROUND if background is None else "")
 
 
-def test_permanent_background_is_not_duplicated_by_legacy_ui_requests():
+def test_explicit_default_background_is_not_duplicated():
     task = TaskInput(
         device=DEVICE, number="12345", goal="Confirm hours", background=DEFAULT_BACKGROUND
     )

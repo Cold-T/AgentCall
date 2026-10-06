@@ -31,8 +31,7 @@
 <label>声音<select name="voice" required><option value="">正在读取声音…</option></select><span class="small">自动保存，用于之后的新通话。</span></label>
 <label>语言<select name="language" required><option value="中文">中文（普通话）</option><option value="粤语">粤语</option><option value="English">English</option><option value="日本語">日本語</option><option value="한국어">한국어</option><option value="Español">Español</option><option value="Français">Français</option><option value="Deutsch">Deutsch</option></select></label>
 <label class="wide">目标<textarea name="goal" maxlength="16000" placeholder="说明希望这通电话达成的目标" required></textarea><span class="small">目标同时作为任务完成条件。</span></label>
-<label class="wide">固定通话说明<textarea id="default-background" rows="12" readonly>__DEFAULT_BACKGROUND__</textarea><span class="small">由后台永久提供，API 调用无需填写。</span></label>
-<label class="wide">补充背景（可选）<textarea name="background" maxlength="16000" placeholder="仅填写这次通话需要补充的事实或资料"></textarea></label>
+<label class="wide">通话说明<textarea id="default-background" name="background" rows="12" maxlength="16000">__DEFAULT_BACKGROUND__</textarea><span class="small">已预填默认说明，可修改或清空；修改仅用于本次通话。API 不填写时使用默认说明。</span></label>
 <div class="actions"><button class="primary" id="start-call">发起通话</button><button type="button" id="refresh-contacts">刷新联系人</button></div>
 </form>
 <p id="call-defaults-status" class="small" role="status">最长通话秒数、模型和声音会自动保存为默认。</p>

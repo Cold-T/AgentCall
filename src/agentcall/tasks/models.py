@@ -138,8 +138,7 @@ def instructions(task):
         k: task["input"][k]
         for k in ("goal", "background", "information", "completion_criteria", "result_schema")
     }
-    # The permanent policy always applies, including to older tasks and explicit empty backgrounds.
-    context["background"] = context["background"].removeprefix(DEFAULT_BACKGROUND).strip()
+    background = context.pop("background")
     return (
         "You are carrying out a telephone task. Speak in " + task["config"]["language"] + ". "
         "Only use the supplied facts; ask the other person when information is missing. "
@@ -154,7 +153,7 @@ def instructions(task):
         "'谢谢您的帮助，再见。' in Chinese, then call hangup silently. If a tool needs "
         "retrying, do not explain the internal retry to the other person. "
         "Never infer whether the phone is connected or disconnected.\n"
-        + DEFAULT_BACKGROUND
+        + background
         + "\nTask context:\n"
         + json.dumps(context, ensure_ascii=False)
     )

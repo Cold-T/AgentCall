@@ -209,7 +209,7 @@ form.onsubmit = event => {
     const options = {...selected.options};
     const body = {
       device:data.device, ...(data.contact_id ? {contact_id:data.contact_id} : {number:data.number.trim()}),
-      max_call_seconds:Number(data.max_call_seconds), goal, completion_criteria:goal, ...(data.background.trim() ? {background:data.background} : {}),
+      max_call_seconds:Number(data.max_call_seconds), goal, completion_criteria:goal, background:data.background,
       config:{provider:selected.provider, model:selected.model, voice:data.voice, language:data.language, options},
       start_immediately:true
     };
