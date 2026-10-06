@@ -58,6 +58,7 @@ class Rig:
         self.session_configs = []
         self.hangup_output_sizes = []
         self.response_count = 0
+        self.closing_release = asyncio.Event()
 
     def tool_outputs(self):
         return [
@@ -84,6 +85,42 @@ class Rig:
                     self.response_count += 1
                     if local_responses == 1:
                         await self.respond(ws)
+                    elif local_responses == 2 and self.mode == "silent_hangup":
+                        await self.closing_release.wait()
+                        await ws.send(
+                            json.dumps({"type": "response.created", "response": {"id": "r2"}})
+                        )
+                        await ws.send(
+                            json.dumps(
+                                {
+                                    "type": "response.output_audio.delta",
+                                    "response_id": "r2",
+                                    "delta": base64.b64encode(b"\x01\x02" * 2400).decode(),
+                                }
+                            )
+                        )
+                        await ws.send(
+                            json.dumps(
+                                {
+                                    "type": "response.output_item.done",
+                                    "response_id": "r2",
+                                    "item": {
+                                        "type": "function_call",
+                                        "call_id": "hangup2",
+                                        "name": "hangup",
+                                        "arguments": '{"reason":"Goodbye spoken"}',
+                                    },
+                                }
+                            )
+                        )
+                        await ws.send(
+                            json.dumps(
+                                {
+                                    "type": "response.done",
+                                    "response": {"id": "r2", "status": "completed"},
+                                }
+                            )
+                        )
         except websockets.exceptions.ConnectionClosed:
             pass
 
@@ -145,6 +182,14 @@ class Rig:
                 },
             )
         if self.mode not in ("hold", "bad_tools"):
+            if self.mode != "silent_hangup":
+                await send(
+                    {
+                        "type": "response.output_audio.delta",
+                        "response_id": "r1",
+                        "delta": base64.b64encode(b"\x01\x02" * 2400).decode(),
+                    }
+                )
             await tool("hangup1", "hangup", {"reason": "Task finished"})
         await send({"type": "response.done", "response": {"id": "r1", "status": "completed"}})
 
@@ -288,7 +333,43 @@ class GeminiRig(Rig):
                 },
             )
         if self.mode not in ("hold", "bad_tools"):
+            if self.mode != "silent_hangup":
+                await send(
+                    {
+                        "serverContent": {
+                            "modelTurn": {
+                                "parts": [
+                                    {
+                                        "inlineData": {
+                                            "mimeType": "audio/pcm;rate=24000",
+                                            "data": base64.b64encode(b"\x01\x02" * 2400).decode(),
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                )
             await tool("hangup1", "hangup", {"reason": "Task finished"})
+            if self.mode == "silent_hangup":
+                await self.closing_release.wait()
+                await send(
+                    {
+                        "serverContent": {
+                            "modelTurn": {
+                                "parts": [
+                                    {
+                                        "inlineData": {
+                                            "mimeType": "audio/pcm;rate=24000",
+                                            "data": base64.b64encode(b"\x01\x02" * 2400).decode(),
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                )
+                await tool("hangup2", "hangup", {"reason": "Goodbye spoken"})
         if self.mode == "cancel_hangup":
             await send({"toolCallCancellation": {"ids": ["hangup1"]}})
         await send({"serverContent": {"generationComplete": True}})
@@ -379,7 +460,7 @@ async def test_complete_http_task_model_audio_tools_hangup_and_records(rig):
     assert rig.phone.commands.count("ATD123;") == 1
     for digit in "12*#":
         assert rig.phone.commands.count("AT+VTS=" + digit) == 1
-    assert rig.hangup_output_sizes == [3200]  # all 200ms closing audio reaches SCO before CHUP
+    assert rig.hangup_output_sizes == [4800]  # greeting + closing audio reaches SCO before CHUP
     audio_inputs = [
         e
         for e in rig.model_messages
@@ -665,10 +746,58 @@ async def test_api_cancelled_hangup_does_not_hang_up_or_clear_received_audio(rig
     await wait_for(
         lambda: any(e["kind"] == "model.tool_cancelled" for e in rig.store.task_events(task_id))
     )
-    await asyncio.sleep(0.3)
+    await wait_for(lambda: len(rig.output) == 4800)
+    await asyncio.sleep(0.03)
     assert rig.store.task(task_id)["state"] == "in_call"
-    assert len(rig.output) == 3200  # interruption does not clear audio buffers
+    assert len(rig.output) == 4800  # interruption does not clear audio buffers
     assert "AT+CHUP" not in rig.phone.commands
     assert rig.store.task(task_id)["model_result"]["status"] == "completed"
     await rig.client.post(f"/tasks/{task_id}/cancel")
     assert (await completed(rig, task_id))["outcome"] == "user_cancelled"
+
+
+async def test_silent_hangup_is_deferred_until_closing_audio_is_sent(rig):
+    rig.mode = "silent_hangup"
+    task_id = await create_start(rig)
+    await wait_for(lambda: any(e["call_id"] == "hangup1" for e in rig.tool_outputs()))
+    rejected = next(e["result"] for e in rig.tool_outputs() if e["call_id"] == "hangup1")
+    assert not rejected["ok"] and "closing statement" in rejected["error"]
+    assert "AT+CHUP" not in rig.phone.commands
+    assert rig.store.task(task_id)["state"] == "in_call"
+    assert rig.store.task(task_id)["model_result"]["status"] == "completed"
+    rig.closing_release.set()
+    result = await completed(rig, task_id)
+    assert result["outcome"] == "completed" and result["error"] is None
+    assert rig.phone.commands.count("AT+CHUP") == 1
+    assert rig.hangup_output_sizes == [4800]
+
+
+async def test_sco_reset_before_idle_after_local_hangup_is_normal(rig, monkeypatch):
+    command = rig.connection.command
+    observed = []
+
+    async def reset_before_idle(value):
+        if value == "AT+CHUP":
+            # Reproduce the phone closing SCO before the HFP idle indication arrives.
+            run = next(iter(rig.manager.runs.values()))
+            rig.backend.stop_audio(DEVICE)
+            await asyncio.sleep(0.02)
+            observed.append(run.failure)
+        return await command(value)
+
+    monkeypatch.setattr(rig.connection, "command", reset_before_idle)
+    task_id = await create_start(rig)
+    result = await completed(rig, task_id)
+    assert observed == [None]
+    assert result["outcome"] == "completed" and result["error"] is None
+    assert rig.phone.commands.count("AT+CHUP") == 1
+
+
+async def test_unexpected_sco_loss_before_hangup_remains_failure(rig):
+    rig.mode = "hold"
+    task_id = await create_start(rig)
+    await wait_for(lambda: rig.store.task(task_id)["model_result"] is not None)
+    rig.backend.stop_audio(DEVICE)
+    result = await completed(rig, task_id)
+    assert result["outcome"] == "audio_failed"
+    assert result["model_result"]["status"] == "completed"

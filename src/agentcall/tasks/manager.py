@@ -185,6 +185,10 @@ class TaskRun:
         self.continue_response = False
         self.hangup_job = None
         self.hangup_call_id = None
+        self.hangup_requested = False
+        self.audio_chunks = 0
+        self.result_audio_floor = None
+        self.last_audio_response = None
         self.opened = False
 
     def spawn(self, coro, outcome):
@@ -194,7 +198,10 @@ class TaskRun:
         def finished(t):
             if not t.cancelled() and t.exception():
                 call = self.linked_call()
-                if outcome == "audio_failed" and call and call["ended_at"]:
+                if outcome == "audio_failed" and (
+                    (self.hangup_requested and isinstance(t.exception(), OSError))
+                    or (call and call["ended_at"])
+                ):
                     # The phone ending a call closes SCO; that EOF is expected cleanup.
                     self.manager.wake.set()
                     return
@@ -341,6 +348,8 @@ class TaskRun:
         slc = self.backend.slc(self.device)
         async with asyncio.timeout(self.config.hangup_timeout_seconds):
             # An accepted ATD may not have emitted callsetup yet; still cancel that pending call.
+            self.hangup_requested = True
+            self.manager.event(self.id, "task.hangup_requested")
             await slc.command(at.cmd_hangup())
             while self.backend.current.get(self.device) == call["id"]:
                 await asyncio.sleep(0.02)
@@ -352,6 +361,9 @@ class TaskRun:
                 if self.bridge is None:
                     raise ProviderError("model produced audio before phone/audio readiness")
                 await self.bridge.enqueue(event["pcm"])
+                if event["pcm"]:
+                    self.audio_chunks += 1
+                    self.last_audio_response = event.get("response_id")
             elif kind == "tool":
                 await self.tool(event)
             elif kind == "tool_cancelled":
@@ -406,9 +418,21 @@ class TaskRun:
                 if self.store.task(self.id)["model_result"] is not None:
                     raise ValueError("task result already submitted")
                 self.store.update_task(self.id, model_result=args)
+                self.result_audio_floor = self.audio_chunks
             elif name == "hangup":
                 if not event.get("response_id"):
                     raise ValueError("hangup requires a provider response ID")
+                has_closing = (
+                    self.audio_chunks > self.result_audio_floor
+                    if self.result_audio_floor is not None
+                    else event["response_id"] == self.last_audio_response
+                )
+                if not has_closing:
+                    self.manager.event(self.id, "task.hangup_deferred", reason="no_spoken_closing")
+                    raise ValueError(
+                        "Speak a brief closing statement aloud before calling hangup again. "
+                        "The hangup reason is not spoken audio."
+                    )
                 if self.hangup_job is None:
                     self.hangup_call_id = call_id
                     self.hangup_job = self.spawn(
