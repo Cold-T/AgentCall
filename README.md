@@ -4,7 +4,7 @@
 
 项目计划基于 handsfree-linux 扩展，复用蓝牙与联系人实现并将核心功能从 GUI 解耦。通话控制和音频使用纯蓝牙 HFP / SCO，不依赖 ADB、手机 App 或屏幕操作；联系人和手机历史另用 PBAP。
 
-**当前状态：规格与实施规划阶段。尚无可运行服务，Android / iPhone 真机验收均待完成。**
+**当前状态：CP2 无界面蓝牙服务已完成（软件实现与自动验证通过）；Android / iPhone 完整真机验收统一安排在 CP6，手机兼容性仍未验证。RTS provider 和 AI 任务模块尚未实现。**
 
 ## 架构
 
@@ -29,6 +29,24 @@ Linux 后台服务
 - [实施顺序和验收清单](docs/roadmap.md)
 - [建议模块结构](docs/layout.md)
 
-建议技术栈：Python、FastAPI、Typer、SQLite，通过 systemd 用户服务常驻运行。上游代码集成前需要确认 handsfree-linux 的具体仓库、版本、许可与复用边界。
+建议技术栈：Python、FastAPI、Typer、SQLite，通过 systemd 用户服务常驻运行。已固定 handsfree-linux 上游提交并保留 MIT 许可，见 [复用说明](docs/upstream.md)。
 
 最终交付包括源代码、安装与运行说明、配置示例、CLI 帮助、API 文档，以及 Android / iPhone 的实际验收结果。具体 provider 模型、协议与配置将在实现阶段以官方文档核实。
+
+## 运行与验证
+
+- [安装、配对、手动通话与双向音频](docs/install.md)
+- [已实现 HTTP API / 音频 WebSocket](docs/api.md)
+- [软件验证记录](docs/verification.md)
+- [CP6 Android / iPhone 真机验收步骤](docs/acceptance.md)
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -e .
+.venv/bin/agentcall-service --config config.example.toml
+# 另一个终端
+.venv/bin/phone health
+.venv/bin/phone --help
+```
+
+HTTP 默认地址 `http://127.0.0.1:8765`，OpenAPI 文档在 `/docs`。Linux 蓝牙与 PBAP 系统依赖见安装说明。服务通过 asyncio D-Bus 持有 HFP，不使用 GUI 或 GLib；CLI 通过 HTTP 调用独立后台服务。

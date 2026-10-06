@@ -1,0 +1,9 @@
+[service]
+host = "127.0.0.1"
+port = 8765
+adapter = "hci0"
+# Start with CVSD for acceptance. mSBC requires libsbc and transparent SCO support.
+codec = "cvsd"
+database = "~/.local/share/agentcall/agentcall.sqlite3"
+token_env = "AGENTCALL_TOKEN"
+reconnect_seconds = 5

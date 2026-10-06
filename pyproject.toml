@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentcall"
+version = "0.1.0"
+description = "Headless Linux Bluetooth HFP calling service"
+requires-python = ">=3.11"
+dependencies = ["fastapi>=0.115,<1", "uvicorn[standard]>=0.30,<1", "dbus-next>=0.2.3,<0.3", "httpx>=0.27,<1", "typer>=0.12,<1", "vobject>=0.9.9,<1", "websockets>=14,<18"]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10", "pytest-asyncio>=0.24,<2", "ruff>=0.11,<1"]
+
+[project.scripts]
+agentcall-service = "agentcall.service.main:main"
+phone = "agentcall.cli.main:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"agentcall.vendor" = ["LICENSE.handsfree-linux"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/agentcall/vendor/*" = ["ALL"]
+"src/agentcall/bluetooth/dbus.py" = ["F722", "F821"]
