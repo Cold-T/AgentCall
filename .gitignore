@@ -17,6 +17,9 @@ dist/
 .env.*
 !.env.example
 config.toml
+pin.env
+environment
+*.toml.ui.json
 
 # Runtime data
 *.db

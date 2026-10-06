@@ -1,3 +1,5 @@
+import json
+import math
 import os
 import tomllib
 from dataclasses import dataclass, field
@@ -33,7 +35,18 @@ class Config:
     @classmethod
     def load(cls, path=None):
         data = tomllib.loads(Path(path).read_text()) if path else {}
+        if path:
+            overrides = Path(str(path) + ".ui.json")
+            if overrides.exists():
+                data = json.loads(overrides.read_text())
         config = cls(**data.get("service", {}), provider=ProviderConfig(**data.get("provider", {})))
+        config.source = Path(path).expanduser().resolve() if path else None
+        return config.validate()
+
+    def validate(self):
+        config = self
+        if not isinstance(config.port, int) or not 1 <= config.port <= 65535:
+            raise ValueError("port must be between 1 and 65535")
         if config.codec not in ("cvsd", "msbc"):
             raise ValueError("codec must be cvsd or msbc")
         if config.obex_bus not in ("session", "system"):
@@ -61,6 +74,6 @@ class Config:
             "audio_timeout_seconds",
             "hangup_timeout_seconds",
         ):
-            if getattr(config, name) <= 0:
+            if not math.isfinite(getattr(config, name)) or getattr(config, name) <= 0:
                 raise ValueError(f"{name} must be positive")
         return config
