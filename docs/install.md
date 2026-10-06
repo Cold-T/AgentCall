@@ -84,7 +84,7 @@ export AGENTCALL_URL='http://LINUX_HOST:8765'
 .venv/bin/phone --json devices
 ```
 
-本阶段没有 RTS provider，也不会读取或使用 OpenAI / Gemini 密钥。
+OpenAI / Gemini 密钥由后台服务读取，配置见 [OpenAI 任务](tasks.md) / [Gemini](gemini.md)。远程 CLI 只需要 AGENTCALL_TOKEN，不需要模型密钥。
 
 ## systemd 用户服务
 
@@ -94,7 +94,8 @@ export AGENTCALL_URL='http://LINUX_HOST:8765'
 mkdir -p ~/.config/agentcall ~/.config/systemd/user
 cp config.example.toml ~/.config/agentcall/config.toml
 cp deploy/agentcall.service ~/.config/systemd/user/agentcall.service
-# 可选：将 AGENTCALL_TOKEN=... 写入 ~/.config/agentcall/environment
+# 按需将 AGENTCALL_TOKEN、OPENAI_API_KEY、GEMINI_API_KEY 写入 ~/.config/agentcall/environment
+# 建议 chmod 600 ~/.config/agentcall/environment
 systemctl --user daemon-reload
 systemctl --user enable --now agentcall
 journalctl --user -u agentcall -f
@@ -106,8 +107,8 @@ journalctl --user -u agentcall -f
 
 ```bash
 .venv/bin/pip install -r requirements-dev.lock -e '.[test]'
-.venv/bin/ruff check src tests
-.venv/bin/ruff format --check src tests --output-format concise
+.venv/bin/ruff check src tests scripts
+.venv/bin/ruff format --check src tests scripts --output-format concise
 .venv/bin/pytest -q
 ```
 

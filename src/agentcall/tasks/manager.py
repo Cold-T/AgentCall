@@ -88,6 +88,12 @@ class TaskManager:
     def event(self, task_id, event_name, **data):
         if "kind" in data:
             data["provider_event"] = data.pop("kind")
+        task = self.store.task(task_id)
+        if event_name in ("tool.call", "tool.result") and "call_id" in data:
+            data["tool_call_id"] = data.pop("call_id")
+        data.setdefault("device", task["device"])
+        if task["call_id"]:
+            data.setdefault("call_id", task["call_id"])
         self.store.task_event(task_id, event_name, data)
         self.backend.emit(event_name, task_id=task_id, **data)
 

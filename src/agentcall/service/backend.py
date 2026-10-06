@@ -99,6 +99,31 @@ class Backend:
             # Codec confirmation occurred before audio is established. Never silently fall back.
             if device in self.current:
                 self.ensure_audio(device)
+        if device and "/dev_" in device:
+            observed = {"last_event": kind, "last_event_data": data}
+            if kind == "hfp.ready":
+                observed.update(
+                    hfp_ready=True, call_state=data.get("state"), codec=data.get("codec")
+                )
+            elif kind == "hfp.disconnected":
+                observed.update(hfp_ready=False, call_state="disconnected", audio=None)
+            elif kind == "call.state":
+                observed["call_state"] = data["state"]
+                if data["state"] == "idle":
+                    observed["audio"] = None
+            elif kind == "audio.ready":
+                observed["audio"] = {k: v for k, v in data.items() if k != "device"}
+            elif kind == "device.properties":
+                values = data["values"]
+                for remote, local in (
+                    ("Connected", "connected"),
+                    ("Paired", "paired"),
+                    ("Alias", "name"),
+                    ("Address", "address"),
+                ):
+                    if remote in values:
+                        observed[local] = values[remote]
+            self.store.save_device(device, observed)
         event = self.store.event(kind, data)
         for queue in tuple(self.subscribers):
             if queue.full():
@@ -172,6 +197,7 @@ class Backend:
                 audio=self.audio[device["path"]].status() if device["path"] in self.audio else None,
                 reconnect=device["path"] in self.store.intents(),
             )
+            self.store.save_device(device["path"], device)
         return devices
 
     async def device_action(self, device, action):
@@ -259,12 +285,15 @@ class Backend:
         address = path.rsplit("dev_", 1)[1].replace("_", ":")
         result = await self.pbap.sync(address, path)
         self.store.save_phonebook(path, result["contacts"], result["history"])
-        return {
+        summary = {
             "device": path,
             "contacts": len(result["contacts"] or []),
             "history": len(result["history"]),
             "errors": result["errors"],
         }
+        self.store.save_device(path, {"pbap_last_sync": summary})
+        self.emit("pbap.synced", **summary)
+        return summary
 
     def ensure_audio(self, device):
         connection = self.connections.get(device)

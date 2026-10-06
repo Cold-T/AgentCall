@@ -7,6 +7,9 @@ from typing import Annotated
 import httpx
 import typer
 from rich.console import Console
+from rich.table import Table
+from rich.text import Text
+from websockets.exceptions import WebSocketException
 
 app = typer.Typer(help="Control the AgentCall HTTP service", no_args_is_help=True)
 console = Console()
@@ -26,6 +29,81 @@ def headers():
     return {"Authorization": f"Bearer {token}"} if token else {}
 
 
+def emit_error(detail, status=None):
+    if settings["as_json"]:
+        typer.echo(json.dumps({"error": detail, "status": status}, ensure_ascii=False), err=True)
+    else:
+        Console(stderr=True).print(f"Error: {detail}", markup=False, style="red")
+    raise typer.Exit(1)
+
+
+def http_error(exc):
+    status = None
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        try:
+            detail = exc.response.json().get("detail", exc.response.text)
+        except (ValueError, AttributeError):
+            detail = exc.response.text
+    else:
+        detail = str(exc)
+    emit_error(detail, status)
+
+
+def render(value, path):
+    if settings["as_json"]:
+        typer.echo(json.dumps(value, ensure_ascii=False))
+        return
+    if not isinstance(value, list):
+        console.print_json(data=value)
+        return
+    if not value:
+        console.print("No records.")
+        return
+    if "events" in path:
+        columns = ["event_id", "time", "kind", "data"]
+    elif path.startswith("/tasks") and path.endswith("/tools"):
+        columns = ["call_id", "name", "state", "arguments", "result"]
+    elif path.startswith("/tasks"):
+        columns = ["id", "device", "state", "outcome", "goal"]
+    elif path.startswith("/contacts"):
+        columns = ["id", "name", "number", "device"]
+    elif path.startswith("/devices"):
+        columns = ["id", "name", "address", "connected", "hfp_ready"]
+        if path.endswith("/saved"):
+            columns = ["id", "name", "address", "last_connected", "last_hfp_ready"]
+    else:
+        columns = ["id", "source", "number", "direction", "state", "duration_seconds", "end_reason"]
+    table = Table(*columns, title=path)
+    for item in value:
+        row = dict(item)
+        row.setdefault("goal", row.get("input", {}).get("goal"))
+        if "last_observed" in row:
+            row.update(row["last_observed"])
+            row["last_connected"] = row.get("connected")
+            row["last_hfp_ready"] = row.get("hfp_ready")
+        if "events" in path:
+            row.setdefault("event_id", row.get("id"))
+            row.setdefault(
+                "data",
+                {k: v for k, v in item.items() if k not in ("id", "event_id", "time", "kind")},
+            )
+        cells = []
+        for key in columns:
+            cell = row.get(key)
+            cells.append(
+                Text(
+                    "—"
+                    if cell is None
+                    else json.dumps(cell, ensure_ascii=False)
+                    if isinstance(cell, (dict, list))
+                    else str(cell)
+                )
+            )
+        table.add_row(*cells)
+    console.print(table)
+
+
 def request(method, path, body=None, params=None, extra_headers=None):
     try:
         response = httpx.request(
@@ -37,18 +115,16 @@ def request(method, path, body=None, params=None, extra_headers=None):
             timeout=120,
         )
         response.raise_for_status()
+        value = response.json()
     except httpx.HTTPError as exc:
-        detail = exc.response.text if isinstance(exc, httpx.HTTPStatusError) else str(exc)
-        if settings["as_json"]:
-            typer.echo(json.dumps({"error": detail}, ensure_ascii=False), err=True)
-        else:
-            Console(stderr=True).print(f"Error: {detail}", markup=False, style="red")
-        raise typer.Exit(1) from None
-    value = response.json()
-    if settings["as_json"]:
-        typer.echo(json.dumps(value, ensure_ascii=False))
-    else:
-        console.print_json(data=value)
+        http_error(exc)
+    except ValueError:
+        emit_error("Service returned invalid JSON")
+    render(value, path)
+
+
+def filters(**values):
+    return {k: v for k, v in values.items() if v is not None}
 
 
 @app.command()
@@ -58,12 +134,28 @@ def health():
 
 
 @app.command()
-def devices():
-    request("GET", "/devices")
+def devices(
+    saved: bool = typer.Option(False, help="Last observed snapshots, available without BlueZ"),
+):
+    """List current devices or saved snapshots."""
+    request("GET", "/devices/saved" if saved else "/devices")
 
 
 @app.command()
-def scan(action: str = "start"):
+def device(device: str):
+    """Show one device, including whether the information is live."""
+    request("GET", f"/devices/{device}")
+
+
+@app.command()
+def pairing():
+    """List pending numeric pairing confirmations."""
+    request("GET", "/pairing")
+
+
+@app.command()
+def scan(action: Annotated[str, typer.Argument(help="start or stop")] = "start"):
+    """Start or stop phone discovery."""
     request("POST", f"/discovery/{action}")
 
 
@@ -75,67 +167,167 @@ def pair(device: str):
 
 @app.command()
 def confirm(request_id: str, reject: bool = False):
+    """Accept a pending pairing request after checking the phone passkey; --reject refuses it."""
     request("POST", f"/pairing/{request_id}", {"accept": not reject})
 
 
 @app.command()
 def connect(device: str):
+    """Connect HFP and enable automatic Bluetooth reconnection without redial."""
     request("POST", f"/devices/{device}/connect")
 
 
 @app.command()
 def disconnect(device: str):
+    """Disconnect a phone and disable automatic reconnection."""
     request("POST", f"/devices/{device}/disconnect")
 
 
 @app.command()
 def sync(device: str):
+    """Sync PBAP contacts and phone history; the phone may ask for permission."""
     request("POST", f"/devices/{device}/sync")
 
 
 @app.command()
-def contacts(query: str = "", device: str | None = None):
-    request("GET", "/contacts", params={"q": query, **({"device": device} if device else {})})
+def contacts(
+    query: Annotated[str, typer.Argument(help="Name or phone number")] = "",
+    device: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+):
+    """Search contacts by name or number; filter by phone and page results."""
+    request("GET", "/contacts", params=filters(q=query, device=device, limit=limit, offset=offset))
 
 
 @app.command()
-def calls(current: bool = False):
-    request("GET", "/calls/current" if current else "/calls")
+def contact(contact_id: str):
+    """Show a contact with its original phone vCard and sync time."""
+    request("GET", f"/contacts/{contact_id}")
 
 
 @app.command()
-def dial(number: str | None = None, device: str = typer.Option(...), contact: str | None = None):
+def calls(
+    current: bool = False,
+    device: str | None = None,
+    source: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+):
+    """List calls; --source project|pbap preserves record origin. --current shows live calls."""
+    if current and (source or offset or limit != 100):
+        raise typer.BadParameter("--current only supports --device")
+    request(
+        "GET",
+        "/calls/current" if current else "/calls",
+        params=filters(device=device)
+        if current
+        else filters(device=device, source=source, limit=limit, offset=offset),
+    )
+
+
+@app.command()
+def call(call_id: str, source: str | None = None):
+    """Show a project call or PBAP history entry; --source disambiguates IDs."""
+    request("GET", f"/calls/{call_id}", params=filters(source=source))
+
+
+@app.command()
+def dial(
+    number: Annotated[str | None, typer.Argument()] = None,
+    device: str = typer.Option(...),
+    contact: str | None = None,
+):
+    """Manually dial a number or --contact CONTACT_ID using --device PHONE."""
     request("POST", "/calls", {"device": device, "number": number, "contact_id": contact})
 
 
 @app.command()
 def answer(call_id: str):
+    """Answer the current incoming call."""
     request("POST", f"/calls/{call_id}/answer")
 
 
 @app.command()
 def hangup(call_id: str):
+    """Request phone hangup; actual state changes when the phone confirms it."""
     request("POST", f"/calls/{call_id}/hangup")
 
 
 @app.command()
 def dtmf(call_id: str, digits: str):
+    """Send digits, * or # to the active call."""
     request("POST", f"/calls/{call_id}/dtmf", {"digits": digits})
 
 
+def sse_values(lines):
+    data = []
+    for line in lines:
+        if not line:
+            if data:
+                yield json.loads("\n".join(data))
+                data = []
+        elif line.startswith("data:"):
+            value = line[5:]
+            data.append(value[1:] if value.startswith(" ") else value)
+    if data:
+        yield json.loads("\n".join(data))
+
+
 @app.command()
-def watch():
-    """Stream SSE progress, including pairing numeric confirmation."""
+def watch(
+    device: str | None = None,
+    task: str | None = None,
+    call: str | None = None,
+    kind: str | None = None,
+):
+    """Watch live SSE events; --json emits one JSON object per line. Ctrl-C exits cleanly."""
     try:
         with httpx.stream(
-            "GET", settings["url"] + "/events", headers=headers(), timeout=None
+            "GET",
+            settings["url"] + "/events",
+            headers=headers(),
+            timeout=None,
+            params=filters(device=device, task_id=task, call_id=call, kind=kind),
         ) as response:
+            if response.is_error:
+                response.read()
             response.raise_for_status()
-            for line in response.iter_lines():
-                if line.startswith("data: "):
-                    typer.echo(line[6:])
-    except (httpx.HTTPError, KeyboardInterrupt):
-        raise typer.Exit(1) from None
+            for event in sse_values(response.iter_lines()):
+                if settings["as_json"]:
+                    typer.echo(json.dumps(event, ensure_ascii=False))
+                else:
+                    console.print(
+                        Text(
+                            f"{event.get('time', '')} {event['kind']} "
+                            + json.dumps(event, ensure_ascii=False)
+                        )
+                    )
+    except httpx.HTTPError as exc:
+        http_error(exc)
+    except ValueError:
+        emit_error("Service returned invalid SSE JSON")
+    except KeyboardInterrupt:
+        raise typer.Exit(0) from None
+
+
+@app.command()
+def events(
+    after: int = 0,
+    limit: int = 100,
+    device: str | None = None,
+    task: str | None = None,
+    call: str | None = None,
+    kind: str | None = None,
+):
+    """Read persisted service events after --after EVENT_ID, including missed live events."""
+    request(
+        "GET",
+        "/events/history",
+        params=filters(
+            after_id=after, limit=limit, device=device, task_id=task, call_id=call, kind=kind
+        ),
+    )
 
 
 @app.command()
@@ -248,9 +440,10 @@ def audio(
 
     try:
         asyncio.run(run())
-    except (OSError, ValueError, RuntimeError, KeyboardInterrupt) as exc:
-        typer.echo(str(exc), err=True)
-        raise typer.Exit(1) from None
+    except KeyboardInterrupt:
+        raise typer.Exit(0) from None
+    except (OSError, ValueError, RuntimeError, WebSocketException) as exc:
+        emit_error(str(exc))
 
 
 task_app = typer.Typer(help="Save, start, inspect and cancel AI phone tasks", no_args_is_help=True)
@@ -259,15 +452,17 @@ app.add_typer(task_app, name="task")
 
 @task_app.command("create")
 def task_create(file: Annotated[Path, typer.Option(exists=True, dir_okay=False)]):
+    """Save a task JSON file; start_immediately can enqueue it immediately."""
     try:
         body = json.loads(file.read_text())
     except (OSError, ValueError) as exc:
-        raise typer.BadParameter(str(exc)) from exc
+        emit_error(str(exc))
     request("POST", "/tasks", body)
 
 
 @task_app.command("start")
 def task_start(task_id: str, key: str | None = typer.Option(None)):
+    """Enqueue a saved task. Retrying --key never repeats a dial."""
     request(
         "POST", f"/tasks/{task_id}/start", extra_headers={"Idempotency-Key": key} if key else {}
     )
@@ -275,24 +470,53 @@ def task_start(task_id: str, key: str | None = typer.Option(None)):
 
 @task_app.command("show")
 def task_show(task_id: str):
+    """Show task configuration, progress, result, error and physical call state."""
     request("GET", f"/tasks/{task_id}")
 
 
 @task_app.command("list")
-def task_list():
-    request("GET", "/tasks")
+def task_list(
+    state: str | None = None,
+    device: str | None = None,
+    outcome: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+):
+    """Filter saved or executed tasks by phone, state or outcome, with pagination."""
+    request(
+        "GET",
+        "/tasks",
+        params=filters(state=state, device=device, outcome=outcome, limit=limit, offset=offset),
+    )
 
 
 @task_app.command("cancel")
 def task_cancel(task_id: str):
+    """Cancel a saved/queued task, or request cleanup and hangup for an active task."""
     request("POST", f"/tasks/{task_id}/cancel")
 
 
 @task_app.command("events")
-def task_events(task_id: str):
-    request("GET", f"/tasks/{task_id}/events")
+def task_events(task_id: str, after: int = 0, limit: int = 100, kind: str | None = None):
+    """Read persisted task events, transcripts and tool results."""
+    request(
+        "GET", f"/tasks/{task_id}/events", params=filters(after_id=after, limit=limit, kind=kind)
+    )
 
 
 @task_app.command("context")
 def task_context(task_id: str, text: str):
+    """Add information to the active model conversation."""
     request("POST", f"/tasks/{task_id}/context", {"text": text})
+
+
+@task_app.command("result")
+def task_result(task_id: str):
+    """Show structured model result, execution outcome and linked actual phone state."""
+    request("GET", f"/tasks/{task_id}/result")
+
+
+@task_app.command("tools")
+def task_tools(task_id: str, limit: int = 100, offset: int = 0):
+    """Show tool IDs, arguments, execution state and returned results."""
+    request("GET", f"/tasks/{task_id}/tools", params=filters(limit=limit, offset=offset))
