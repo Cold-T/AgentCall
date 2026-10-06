@@ -10,6 +10,8 @@ codec = "cvsd"
 obex_bus = "session"
 database = "~/.local/share/agentcall/agentcall.sqlite3"
 token_env = "AGENTCALL_TOKEN"
+# Fixed PIN mode: requires 6-12 digits, supports Bearer and Basic user "pin".
+pin_auth = false
 reconnect_seconds = 5
 api_key_env = "OPENAI_API_KEY"
 gemini_api_key_env = "GEMINI_API_KEY"
