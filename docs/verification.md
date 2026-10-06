@@ -1,5 +1,7 @@
 # Checkpoint 2 软件验证记录
 
+CP2 已按软件实现与自动验证的完成条件完成；完整 Android / iPhone 真机验收移至 CP6，手机兼容性保持未验证。
+
 验证日期：2026-10-05（America/Chicago）。环境：Linux aarch64，Python 3.13.7。依赖版本保存在 `requirements-dev.lock`。
 
 ## 已完成的本地验证
@@ -33,6 +35,6 @@ LD_LIBRARY_PATH=/tmp/agentcall-libsbc/runtime/usr/lib/aarch64-linux-gnu .venv/bi
 
 当前能看到 `hci0`，但系统 bus 没有运行 `org.bluez`，没有在本次会话中连接测试手机。因此没有执行手机 SIM 拨号、实际 SCO 无线传输、对端 DTMF 接收或手机 PBAP 授权验收。
 
-真实 Android / iPhone 验收状态为待执行，步骤见 [acceptance.md](acceptance.md)。不把模拟 AG、真实 D-Bus、libsbc 编解码和 loopback 网络验证写成手机兼容性通过。
+真实 Android / iPhone 验收状态为待执行，统一安排在 CP6，步骤见 [acceptance.md](acceptance.md)。不把模拟 AG、真实 D-Bus、libsbc 编解码和 loopback 网络验证写成手机兼容性通过。
 
 GitHub Actions 配置了 Python 3.11 / 3.13 测试矩阵，包含 dbus 和 libsbc1；远程运行结果以对应 commit 的 Actions 页面为准。
