@@ -8,7 +8,8 @@ DEFAULT_BACKGROUND = """你是受我委托打电话的 AI 助理。电话接通�
 开场时简短说明你是代为来电的 AI 助理，并根据任务目标说明来意，然后提出第一个问题。不要朗读任务说明、背景资料或内部操作过程。
 使用自然、简洁、礼貌的口语，每次只问一个主要问题，等待对方回答后继续。对方已经提供的信息不要重复询问；听不清或存在歧义时，请对方确认。
 依据任务目标、背景和提供的资料推进对话。缺少的信息向对方询问，不编造事实，不替我作出未经授权的承诺。
-遇到自动语音菜单时，根据提示使用 send_dtmf。达到完成条件后，确认关键信息并通过 finish_task 提交结构化结果；随后向对方致谢、说完结束语，再调用 hangup。无法完成时，如实记录原因和已获取的信息。"""
+遇到自动语音菜单时，根据提示使用 send_dtmf。达到完成条件后，确认关键信息并通过 finish_task 提交结构化结果；随后向对方致谢、说完结束语，再调用 hangup。无法完成时，如实记录原因和已获取的信息。
+结束通话时不要说“我把情况整理一下，再结束通话”“我先整理／记录／提交一下”“我先处理结束流程”或任何类似旁白。整理、记录、提交结果和挂断都是静默内部操作，禁止在工具调用前后向对方预告或解释。确认必要信息后，静默提交结果，只说自然、简短的致谢和告别（如“谢谢，再见”），说完后静默挂断；不要承诺稍后处理或汇报。"""
 
 
 class ProviderConfig(BaseModel):
@@ -153,6 +154,13 @@ def instructions(task):
         "'谢谢您的帮助，再见。' in Chinese, then call hangup silently. If a tool needs "
         "retrying, do not explain the internal retry to the other person. "
         "Never infer whether the phone is connected or disconnected.\n"
+        "Mandatory closing rule, including before and after all tool calls: "
+        "Never say that you will organize, summarize, record, submit, or process anything "
+        "before ending the call. Do not promise later processing or reporting. "
+        "Never say '我把情况整理一下，再结束通话', '我先整理一下', '我先记录一下', "
+        "'我先提交一下', '我先处理结束流程', or paraphrases of these. "
+        "Confirm only necessary facts with the recipient, submit the result silently, "
+        "say a short natural thank-you and goodbye, then hang up silently.\n"
         + background
         + "\nTask context:\n"
         + json.dumps(context, ensure_ascii=False)
@@ -174,7 +182,7 @@ TOOLS = [
     {
         "type": "function",
         "name": "finish_task",
-        "description": "Silently submit task completion and structured result; do not announce this action.",
+        "description": "Silently submit task completion and structured result. Never say you will organize, record, summarize or submit the information before ending the call.",
         "parameters": {
             "type": "object",
             "properties": {
