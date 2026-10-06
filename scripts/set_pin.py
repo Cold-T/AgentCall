@@ -7,9 +7,9 @@ from pathlib import Path
 
 
 def main():
-    pin = getpass.getpass("Fixed PIN (6-12 digits): ")
-    if not pin.isascii() or not pin.isdigit() or not 6 <= len(pin) <= 12:
-        raise SystemExit("PIN must contain 6-12 ASCII digits")
+    pin = getpass.getpass("Fixed PIN (4 digits): ")
+    if not pin.isascii() or not pin.isdigit() or len(pin) != 4:
+        raise SystemExit("PIN must contain exactly 4 ASCII digits")
     if pin != getpass.getpass("Confirm PIN: "):
         raise SystemExit("PINs do not match")
     directory = Path.home() / ".config/agentcall"

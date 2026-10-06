@@ -1,6 +1,6 @@
 # PIN 登录网页
 
-入口：[https://agenticcall.coldt.uk](https://agenticcall.coldt.uk)。输入原先自行设置的 6–12 位固定 PIN。未登录只显示登录表单，设备、联系人、任务、通话记录、设置和 API 文档均要求认证。
+入口：[https://agenticcall.coldt.uk](https://agenticcall.coldt.uk)。输入原先自行设置的 4 位固定 PIN。未登录只显示登录表单，设备、联系人、任务、通话记录、设置和 API 文档均要求认证。
 
 网页使用原生 HTML / CSS / JavaScript，不引入前端框架或构建步骤。所有操作调用现有 HTTP API，关掉浏览器后后台任务继续执行。桌面和手机浏览器均可使用。
 

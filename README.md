@@ -38,6 +38,7 @@ Linux 后台服务
 - [安装、配对、手动通话与双向音频](docs/install.md)
 - [HTTP API / 音频 WebSocket](docs/api.md)
 - [完整 CLI 帮助](docs/cli.md)
+- [Cloudflare Tunnel 与 4 位 PIN](docs/cloudflare.md)
 - [PIN 登录网页与全部设置](docs/web-ui.md)
 - [OpenAI 任务配置与操作](docs/tasks.md)
 - [Gemini 配置与使用](docs/gemini.md)
@@ -56,4 +57,4 @@ python3 -m venv .venv
 .venv/bin/phone --help
 ```
 
-HTTP 默认地址 `http://127.0.0.1:8765`，OpenAPI 文档在 `/docs`，网页在 `/ui`。公网入口为 [agenticcall.coldt.uk](https://agenticcall.coldt.uk)，输入固定 PIN 后操作。Linux 蓝牙与 PBAP 系统依赖见安装说明。服务通过 asyncio D-Bus 持有 HFP，无桌面 GUI 或 GLib 依赖。
+HTTP 默认地址 `http://127.0.0.1:8765`，OpenAPI 文档在 `/docs`，网页在 `/ui`。公网入口为 [agenticcall.coldt.uk](https://agenticcall.coldt.uk)，业务 API 位于 `/api/`，身份验证使用严格 4 位数字 PIN，支持前导零；根路径保留网页入口，网页操作也通过 API。Linux 蓝牙与 PBAP 系统依赖见安装说明。服务通过 asyncio D-Bus 持有 HFP，无桌面 GUI 或 GLib 依赖。

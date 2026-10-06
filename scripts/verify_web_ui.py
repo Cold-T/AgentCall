@@ -29,7 +29,7 @@ from agentcall.storage.store import Store  # noqa: E402
 async def verify(directory):
     config_path = directory / "config.toml"
     config_path.write_text('[service]\npin_auth=true\nroot_path="/api"\n')
-    os.environ["AGENTCALL_TOKEN"] = "123456"
+    os.environ["AGENTCALL_TOKEN"] = "0123"
     config = Config.load(config_path)
     backend = Backend(config, Store(":memory:"))
     host, peer = socket.socketpair()
@@ -89,7 +89,7 @@ async def verify(directory):
             await page.goto(f"http://127.0.0.1:{port}/api/ui")
             await expect(page.locator("#login")).to_be_visible()
             await expect(page.locator("#settings-form")).to_have_count(0)
-            await page.locator("#pin").fill("123456")
+            await page.locator("#pin").fill("0123")
             await page.get_by_role("button", name="登录", exact=True).click()
             await expect(page.locator("#device-list")).to_contain_text("Test Android")
             await page.locator('[data-tab="contacts"]').click()
@@ -153,11 +153,11 @@ async def verify(directory):
             await page.locator('#call-control button[value="hangup"]').click()
             await expect(page.locator("#notice")).to_have_text("请求已提交")
             await page.locator('[data-tab="settings"]').click()
-            await page.locator('#credentials [name="pin"]').fill("987654")
-            await page.locator('#credentials [name="confirm"]').fill("987654")
+            await page.locator('#credentials [name="pin"]').fill("9876")
+            await page.locator('#credentials [name="confirm"]').fill("9876")
             await page.get_by_role("button", name="修改 PIN", exact=True).click()
             await expect(page.locator("#login")).to_be_visible()
-            await page.locator("#pin").fill("987654")
+            await page.locator("#pin").fill("9876")
             await page.get_by_role("button", name="登录", exact=True).click()
             await expect(page.locator("#device-list")).to_contain_text("Test Android")
             await page.locator("#logout").click()

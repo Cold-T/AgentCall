@@ -14,7 +14,7 @@ CSRF = {"X-AgentCall-CSRF": "1", "Origin": "https://test"}
 
 def web_app(service, monkeypatch, tmp_path):
     backend = service[0]
-    monkeypatch.setenv("AGENTCALL_TOKEN", "123456")
+    monkeypatch.setenv("AGENTCALL_TOKEN", "0123")
     path = tmp_path / "config.toml"
     path.write_text('[service]\npin_auth=true\nroot_path="/api"\n')
     config = Config.load(path)
@@ -22,7 +22,7 @@ def web_app(service, monkeypatch, tmp_path):
     return create_app(config, backend), config
 
 
-async def login(client, pin="123456"):
+async def login(client, pin="0123"):
     return await client.post("/api/session/login", json={"pin": pin}, headers=CSRF)
 
 
@@ -38,13 +38,13 @@ async def test_ui_gate_session_cookie_logout_and_bearer(service, monkeypatch, tm
         assert (await c.get("/api/settings")).status_code == 401
         assert (await c.get("/api/ui/assets/app.js")).status_code == 200
         assert (await c.get("/api/ui/assets/pin.env")).status_code == 404
-        wrong = await login(c, "654321")
-        assert wrong.status_code == 401 and "654321" not in wrong.text
+        wrong = await login(c, "6543")
+        assert wrong.status_code == 401 and "6543" not in wrong.text
         response = await login(c)
-        assert response.status_code == 200 and "123456" not in response.text
+        assert response.status_code == 200 and "0123" not in response.text
         cookie = response.headers["set-cookie"]
         assert all(flag in cookie.lower() for flag in ("secure", "httponly", "samesite=strict"))
-        assert "123456" not in cookie
+        assert "0123" not in cookie
         assert 'id="settings-form"' in (await c.get("/api/ui")).text
         assert (await c.get("/api/devices")).status_code == 200
         assert (await c.get("/api/docs")).status_code == 200
@@ -52,7 +52,7 @@ async def test_ui_gate_session_cookie_logout_and_bearer(service, monkeypatch, tm
         assert (await c.get("/api/devices")).status_code == 401
         assert 'id="login"' in (await c.get("/api/ui")).text
         assert (
-            await c.get("/api/health", headers={"Authorization": "Bearer 123456"})
+            await c.get("/api/health", headers={"Authorization": "Bearer 0123"})
         ).status_code == 200
 
 
@@ -61,10 +61,10 @@ async def test_cookie_csrf_protects_actions_and_login(service, monkeypatch, tmp_
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="https://test"
     ) as c:
-        assert (await c.post("/api/session/login", json={"pin": "123456"})).status_code == 403
+        assert (await c.post("/api/session/login", json={"pin": "0123"})).status_code == 403
         evil = {**CSRF, "Origin": "https://evil.test"}
         assert (
-            await c.post("/api/session/login", json={"pin": "123456"}, headers=evil)
+            await c.post("/api/session/login", json={"pin": "0123"}, headers=evil)
         ).status_code == 403
         assert (await login(c)).status_code == 200
         for headers in ({}, evil):
@@ -79,11 +79,11 @@ async def test_login_rate_limit_shared_with_api(service, monkeypatch, tmp_path):
         transport=httpx.ASGITransport(app=app), base_url="https://test"
     ) as c:
         for _ in range(10):
-            assert (await login(c, "654321")).status_code == 401
+            assert (await login(c, "6543")).status_code == 401
         response = await login(c)
         assert response.status_code == 429 and "retry-after" in response.headers
         assert (
-            await c.get("/api/health", headers={"Authorization": "Bearer 123456"})
+            await c.get("/api/health", headers={"Authorization": "Bearer 0123"})
         ).status_code == 429
         assert 'id="login"' in (await c.get("/api/ui")).text
 
@@ -162,7 +162,15 @@ async def test_credentials_write_only_validation_and_pin_rotation(service, monke
         transport=httpx.ASGITransport(app=app), base_url="https://test"
     ) as c:
         await login(c)
-        for body in ({"pin": "bad-secret"}, {"openai": "secret\nINJECTED=true"}):
+        for body in (
+            {"pin": "bad-secret"},
+            {"pin": "123"},
+            {"pin": "12345"},
+            {"pin": "123456"},
+            {"pin": "１２３４"},
+            {"pin": "123\n"},
+            {"openai": "secret\nINJECTED=true"},
+        ):
             response = await c.put("/api/settings/credentials", json=body, headers=CSRF)
             assert response.status_code in (400, 422)
             assert "secret" not in response.text
@@ -178,25 +186,23 @@ async def test_credentials_write_only_validation_and_pin_rotation(service, monke
         assert env.stat().st_mode & 0o777 == 0o600
         assert "sk-test-key" in env.read_text()
         settings = await c.get("/api/settings")
-        assert "test-key" not in settings.text and "123456" not in settings.text
+        assert "test-key" not in settings.text and "0123" not in settings.text
         assert settings.json()["credentials"] == {"openai": True, "gemini": True, "pin": True}
         second = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://test")
         async with second:
             await login(second)
-            response = await c.put(
-                "/api/settings/credentials", headers=CSRF, json={"pin": "987654"}
-            )
+            response = await c.put("/api/settings/credentials", headers=CSRF, json={"pin": "9876"})
             assert response.status_code == 200 and response.json()["login_required"]
-            assert "987654" not in response.text
+            assert "9876" not in response.text
             assert (tmp_path / "pin.env").stat().st_mode & 0o777 == 0o600
             assert (await c.get("/api/devices")).status_code == 401
             assert (await second.get("/api/devices")).status_code == 401
             assert (await login(c)).status_code == 401
-            assert (await login(c, "987654")).status_code == 200
+            assert (await login(c, "9876")).status_code == 200
 
 
 def test_sessions_bounded_expire_and_reject_forgery(monkeypatch):
-    monkeypatch.setenv("AGENTCALL_TOKEN", "123456")
+    monkeypatch.setenv("AGENTCALL_TOKEN", "0123")
     now = [0]
     monkeypatch.setattr(ui, "monotonic", lambda: now[0])
     sessions = ui.Sessions(Config(), ttl=10, maximum=2)
@@ -211,7 +217,7 @@ def test_sessions_bounded_expire_and_reject_forgery(monkeypatch):
     now[0] = 10
     assert not sessions.valid(request(two))
     token = sessions.create()
-    monkeypatch.setenv("AGENTCALL_TOKEN", "654321")
+    monkeypatch.setenv("AGENTCALL_TOKEN", "6543")
     assert not sessions.valid(request(token))
 
 

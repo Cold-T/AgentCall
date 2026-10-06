@@ -56,8 +56,8 @@ class ConnectionBasic(HTTPBasic):
 
 def create_app(config=None, backend=None, task_manager=None):
     config = config or Config()
-    if config.pin_auth and not config.token:
-        raise ValueError("pin_auth requires a configured PIN")
+    if config.pin_auth:
+        config.validate()
     limiter = FailedAuthLimiter()
     sessions = Sessions(config)
 

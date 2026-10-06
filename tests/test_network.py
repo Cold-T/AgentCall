@@ -24,7 +24,7 @@ async def test_real_http_sse_and_full_duplex_websocket(monkeypatch, pin_auth):
         backend.running = True
 
     monkeypatch.setattr(backend, "start", start)
-    token = "123456" if pin_auth else "network-test"
+    token = "0123" if pin_auth else "network-test"
     monkeypatch.setenv("AGENTCALL_TOKEN", token)
     call_id = store.new_call(DEVICE, "123", "outgoing", "active")
     backend.current[DEVICE] = call_id
@@ -90,7 +90,7 @@ async def test_real_http_sse_and_full_duplex_websocket(monkeypatch, pin_auth):
 async def test_cookie_session_sse_and_audio_origin(monkeypatch):
     store = Store(":memory:")
     config = Config(pin_auth=True, root_path="/api")
-    monkeypatch.setenv("AGENTCALL_TOKEN", "123456")
+    monkeypatch.setenv("AGENTCALL_TOKEN", "0123")
     backend = Backend(config, store)
 
     async def start():
@@ -117,7 +117,7 @@ async def test_cookie_session_sse_and_audio_origin(monkeypatch):
         async with httpx.AsyncClient(base_url=origin) as client:
             response = await client.post(
                 "/api/session/login",
-                json={"pin": "123456"},
+                json={"pin": "0123"},
                 headers={"X-AgentCall-CSRF": "1", "Origin": origin},
             )
             assert response.status_code == 200

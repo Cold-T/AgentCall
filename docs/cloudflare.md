@@ -1,4 +1,4 @@
-# Cloudflare Tunnel 与固定 PIN
+# Cloudflare Tunnel 与 4 位 PIN
 
 公网域名：`https://agenticcall.coldt.uk`。本机网关为 `http://127.0.0.1:8766`，后台只监听 `127.0.0.1:8765`。公网使用 HTTPS，本机回源使用 HTTP；不需要 Cloudflare Access、邮箱白名单或本机证书。
 
@@ -14,7 +14,9 @@ cd ~/AgentCall
 .venv/bin/python scripts/set_pin.py
 ```
 
-输入并确认 6–12 位数字，不回显，不进入 shell 历史。脚本原子写入用户私有的 `~/.config/agentcall/pin.env`，权限 0600；不把 PIN 写进配置或 Git。该文件由 systemd 用户服务加载。重新运行脚本并执行 `systemctl --user restart agentcall` 可轮换 PIN；重启会结束现有后台会话，通话期间不执行。
+输入并确认 4 位数字，不回显，不进入 shell 历史。脚本原子写入用户私有的 `~/.config/agentcall/pin.env`，权限 0600；不把 PIN 写进配置或 Git。该文件由 systemd 用户服务加载。重新运行脚本并执行 `systemctl --user restart agentcall` 可轮换 PIN；重启会结束现有后台会话，通话期间不执行。
+
+PIN 严格使用 4 个 ASCII 数字，支持前导零；启动、设置接口和网页表单使用相同长度约束。当前部署已生成新的随机 4 位 PIN，保存在上述私有文件中，旧的 6 位 PIN 已失效。
 
 配置 `[service]` 设置 `pin_auth=true`、`token_env="AGENTCALL_TOKEN"`、`root_path="/api"`，保持 loopback 监听。PIN 缺失或格式错误时服务启动失败，不允许空 PIN 开放 API。API 接受 `Authorization: Bearer PIN`，或 HTTP Basic 用户名 `pin` / 密码 PIN。每个客户端 IP 在 60 秒内累计 10 次错误认证后暂时返回 429 和 Retry-After；被限流期间正确 PIN 也需等待窗口结束。错误观察缓存最多保留 1024 个客户端，内存状态在重启后清空；不是分布式账号系统。
 

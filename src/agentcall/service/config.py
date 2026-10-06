@@ -52,11 +52,9 @@ class Config:
         if config.obex_bus not in ("session", "system"):
             raise ValueError("obex_bus must be session or system")
         if config.pin_auth and (
-            not config.token.isascii()
-            or not config.token.isdigit()
-            or not 6 <= len(config.token) <= 12
+            not config.token.isascii() or not config.token.isdigit() or len(config.token) != 4
         ):
-            raise ValueError("pin_auth requires a configured 6-12 digit PIN in token_env")
+            raise ValueError("pin_auth requires a configured 4 digit PIN in token_env")
         if config.root_path and (
             not config.root_path.startswith("/")
             or config.root_path.endswith("/")

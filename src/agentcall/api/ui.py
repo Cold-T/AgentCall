@@ -100,7 +100,7 @@ class Credentials(BaseModel):
     model_config = ConfigDict(extra="forbid")
     openai: str | None = Field(default=None, min_length=1, max_length=4096)
     gemini: str | None = Field(default=None, min_length=1, max_length=4096)
-    pin: str | None = Field(default=None, pattern=r"^[0-9]{6,12}$")
+    pin: str | None = Field(default=None, pattern=r"^[0-9]{4}$")
 
 
 def install_ui(app, config, sessions, check_auth):
