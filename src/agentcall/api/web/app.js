@@ -6,6 +6,8 @@ const form = $('#task-create');
 let models = [];
 const voices = {openai:['marin','cedar','alloy','ash','ballad','coral','echo','sage','shimmer','verse'], gemini:['Aoede','Puck','Charon','Kore','Fenrir','Zephyr','Leda','Orus']};
 const chosenVoices = new Map();
+let defaultsSave = Promise.resolve();
+let defaultsRequest = 0;
 let activeTask;
 let historyOffset = 0;
 let contactsRequest = 0;
@@ -139,13 +141,44 @@ function loadVoices() {
   const preferred = chosenVoices.get(model.provider) || model.voice;
   select.value = available.includes(preferred) ? preferred : available[0];
 }
-form.elements.model.onchange = loadVoices;
+form.elements.model.onchange = () => { loadVoices(); run(saveCallDefaults); };
 form.elements.voice.onchange = () => {
   const model = form.elements.model.value ? models[Number(form.elements.model.value)] : null;
   if (model) chosenVoices.set(model.provider, form.elements.voice.value);
+  run(saveCallDefaults);
 };
+form.elements.max_call_seconds.onchange = () => run(saveCallDefaults);
+async function saveCallDefaults() {
+  const selected = models[Number(form.elements.model.value)];
+  if (!form.elements.model.value || !selected || !form.elements.voice.value) throw new Error('请选择模型和声音。');
+  if (!form.elements.max_call_seconds.checkValidity()) throw new Error('最长通话秒数应为 1–3600。');
+  const chosen = {...selected, voice:form.elements.voice.value};
+  const duration = Number(form.elements.max_call_seconds.value);
+  const request = ++defaultsRequest;
+  $('#call-defaults-status').textContent = '正在保存默认设置…';
+  const save = defaultsSave.catch(() => {}).then(async () => {
+    const settings = await api('/settings');
+    const current = settings.active.provider;
+    const body = settings.saved;
+    body.service.default_max_call_seconds = duration;
+    body.provider = {...current, provider:chosen.provider, model:chosen.model, voice:chosen.voice,
+      options:chosen.provider === current.provider ? current.options : chosen.options};
+    const result = await api('/settings', 'PUT', body);
+    selected.voice = chosen.voice; selected.options = result.active.provider.options;
+    if (request === defaultsRequest) {
+      $('#call-defaults-status').textContent = '已保存为默认，之后网页和 API 新通话都会继承。';
+      for (const option of form.elements.voice.options) option.textContent = option.value + (option.value === chosen.voice ? '（默认）' : '');
+    }
+  });
+  defaultsSave = save;
+  try { await save; } catch (error) {
+    if (request === defaultsRequest) $('#call-defaults-status').textContent = '默认设置未保存，请重试。';
+    throw error;
+  }
+}
 async function loadModels() {
   const data = await api('/settings'); const active = data.active.provider;
+  form.elements.max_call_seconds.value = data.active.service.default_max_call_seconds ?? 300;
   models = [
     {...(active.provider === 'openai' ? active : {provider:'openai', model:'gpt-realtime-2.1', voice:'marin', options:{}})},
     {...(active.provider === 'gemini' ? active : {provider:'gemini', model:'gemini-3.8-live', voice:'Aoede', options:{}})}
@@ -172,6 +205,7 @@ form.onsubmit = event => {
     if (!data.voice) throw new Error('请选择声音。');
     const goal = data.goal.trim();
     if (!goal) throw new Error('请填写通话目标。');
+    await saveCallDefaults();
     const options = {...selected.options};
     const body = {
       device:data.device, ...(data.contact_id ? {contact_id:data.contact_id} : {number:data.number.trim()}),

@@ -26,6 +26,7 @@ class Config:
     answer_timeout_seconds: float = 60
     audio_timeout_seconds: float = 10
     hangup_timeout_seconds: float = 5
+    default_max_call_seconds: float = 300
     provider: ProviderConfig = field(default_factory=ProviderConfig)
 
     @property
@@ -90,4 +91,9 @@ class Config:
         ):
             if not math.isfinite(getattr(config, name)) or getattr(config, name) <= 0:
                 raise ValueError(f"{name} must be positive")
+        if (
+            not math.isfinite(config.default_max_call_seconds)
+            or not 0 < config.default_max_call_seconds <= 3600
+        ):
+            raise ValueError("default_max_call_seconds must be greater than 0 and at most 3600")
         return config

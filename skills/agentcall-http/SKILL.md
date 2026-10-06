@@ -44,7 +44,7 @@ Common failures: `401` means authentication failed; `429` means authentication r
    - `completion_criteria` (optional): defaults to `goal` when omitted or blank, matching the web UI. Omit it unless the user requests a more specific success criterion.
    - `result_schema`: JSON Schema for the structured result; references must be local fragments.
    - `config`: optional `provider` (`openai` or `gemini`), `model`, `voice`, `language`, and provider `options`. Omit it to inherit current service defaults; inspect `GET /settings` if needed. Both providers enable conversation transcription by default; do not add options solely to enable it. Credentials and model endpoints are service-side only.
-   - `max_call_seconds`: optional, 1–3600; defaults to 300.
+   - `max_call_seconds`: optional, 1–3600; omission inherits the service’s saved `default_max_call_seconds` (initially 300). The web duration, model and voice selections are saved as service defaults. An explicit API task override affects that task only.
    - `start_immediately`: leave `false` unless the user explicitly authorized calling now.
 4. Create it with `POST /tasks`. A `201` response includes the task record and its `id`.
 5. When authorized, start with `POST /tasks/{id}/start`, sending a stable `Idempotency-Key`. The response is `202`: this means accepted/queued, not that the call connected.

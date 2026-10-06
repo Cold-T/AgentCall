@@ -64,3 +64,9 @@ python scripts/verify_web_ui.py
 ## 选择声音
 
 发起通话表单新增声音下拉框，默认选中服务配置的声音，按当前 provider 切换可选列表。OpenAI Realtime 提供 marin、cedar、alloy、ash、ballad、coral、echo、sage、shimmer、verse（[官方声音说明](https://developers.openai.com/api/docs/guides/realtime-conversations#voice-options)）；Gemini 提供常用预设 Aoede、Puck、Charon、Kore、Fenrir、Zephyr、Leda、Orus（[Live API 声音说明](https://ai.google.dev/gemini-api/docs/live-api/capabilities#change-voice-and-language)）。服务已有自定义默认声音也保留为选项。页面会分别记住这次打开期间每家 provider 的声音选择，提交为任务的 `config.voice`，历史详情显示实际保存的声音。修改只影响新建通话，不修改运行中的会话或服务默认设置。
+
+## 保存通话默认设置
+
+修改最长通话秒数、模型或声音时自动保存为服务默认值；发起通话前也确认保存成功。刷新网页和重启后继承这些设置，API 省略 `max_call_seconds` 和模型 / 声音时也继承。状态提示显示保存中、成功或失败；保存失败不继续提交拨号任务。
+
+使用已有 `PUT /settings` 持久化 `service.default_max_call_seconds` 和 `provider.model` / `provider.voice`。同一 provider 的降噪、语速与其他 options 保留；网页切换 provider 时保留该页面中对应模型的 options。完成条件、对话转写和 API 仅保存任务的默认行为保持原有规则。显式 API 任务参数不会修改全局默认值，已保存或执行中的任务也不随默认值变化。

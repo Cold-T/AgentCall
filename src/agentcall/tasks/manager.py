@@ -62,6 +62,8 @@ class TaskManager:
         path = self.backend.path(body.device)
         data = body.model_dump(mode="json")
         data["device"] = path
+        if "max_call_seconds" not in body.model_fields_set:
+            data["max_call_seconds"] = self.config.default_max_call_seconds
         if body.contact_id:
             contacts = [c for c in self.store.contacts(device=path) if c["id"] == body.contact_id]
             if not contacts:

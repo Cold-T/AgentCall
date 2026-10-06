@@ -31,6 +31,7 @@ LIVE = {
     "answer_timeout_seconds",
     "audio_timeout_seconds",
     "hangup_timeout_seconds",
+    "default_max_call_seconds",
 }
 
 

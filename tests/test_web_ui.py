@@ -156,21 +156,25 @@ async def test_settings_persist_reload_and_apply_defaults(service, monkeypatch, 
         body = copy.deepcopy(data["saved"])
         body["provider"] = {
             "provider": "gemini",
+            "voice": "Puck",
             "language": "English",
             "options": {"temperature": 0.5},
         }
         body["service"]["adapter"] = "hci1"
         body["service"]["answer_timeout_seconds"] = 90
+        body["service"]["default_max_call_seconds"] = 120
         response = await c.put("/api/settings", json=body, headers=CSRF)
         assert response.status_code == 200, response.text
         result = response.json()
         assert result["restart_required"] == ["adapter"]
         assert config.adapter == "hci0" and config.answer_timeout_seconds == 90
         assert config.provider.provider == "gemini"
+        assert config.default_max_call_seconds == 120 and config.provider.voice == "Puck"
         override = tmp_path / "config.toml.ui.json"
         assert override.stat().st_mode & 0o777 == 0o600
         loaded = Config.load(config.source)
         assert loaded.adapter == "hci1" and loaded.provider.language == "English"
+        assert loaded.default_max_call_seconds == 120 and loaded.provider.voice == "Puck"
         task = await c.post(
             "/api/tasks",
             headers=CSRF,
@@ -182,6 +186,23 @@ async def test_settings_persist_reload_and_apply_defaults(service, monkeypatch, 
         )
         assert task.status_code == 201
         assert task.json()["config"]["provider"] == "gemini"
+        assert task.json()["config"]["voice"] == "Puck"
+        assert task.json()["input"]["max_call_seconds"] == 120
+        explicit = await c.post(
+            "/api/tasks",
+            headers=CSRF,
+            json={
+                "device": "dev_11_22_33_44_55_66",
+                "number": "12345",
+                "goal": "Override",
+                "max_call_seconds": 45,
+                "config": {"voice": "Aoede"},
+            },
+        )
+        assert explicit.status_code == 201
+        assert explicit.json()["input"]["max_call_seconds"] == 45
+        assert explicit.json()["config"]["voice"] == "Aoede"
+        assert config.default_max_call_seconds == 120 and config.provider.voice == "Puck"
         assert task.json()["input"]["background"] == DEFAULT_BACKGROUND
         assert task.json()["state"] == "saved"
         assert not any(cmd.startswith("ATD") for cmd in service[2].commands)

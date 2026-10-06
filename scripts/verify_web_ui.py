@@ -30,7 +30,9 @@ from agentcall.tasks.models import TaskInput  # noqa: E402
 
 async def verify(directory):
     config_path = directory / "config.toml"
-    config_path.write_text('[service]\npin_auth=true\nroot_path="/api"\n')
+    config_path.write_text(
+        '[service]\npin_auth=true\nroot_path="/api"\n[provider.options]\nspeed=1.2\nturn_detection={type="server_vad", threshold=0.65}\n'
+    )
     os.environ["AGENTCALL_TOKEN"] = "1111"  # Deliberately stale startup credential.
     os.environ["OPENAI_API_KEY"] = "test-only"
     os.environ["GEMINI_API_KEY"] = "test-only"
@@ -168,6 +170,25 @@ async def verify(directory):
             assert created["input"]["max_call_seconds"] == 120
             assert created["config"]["language"] == "English"
             assert created["config"]["voice"] == "cedar"
+            assert created["config"]["options"]["speed"] == 1.2
+            assert created["config"]["options"]["turn_detection"]["threshold"] == 0.65
+            loaded = Config.load(config_path)
+            assert loaded.default_max_call_seconds == 120 and loaded.provider.voice == "cedar"
+            await page.reload()
+            await expect(page.locator("#device-list")).to_contain_text("Test Android")
+            await page.get_by_role("tab", name="发起通话").click()
+            await expect(page.locator('#task-create [name="voice"]')).to_have_value("cedar")
+            await expect(page.locator('#task-create [name="max_call_seconds"]')).to_have_value(
+                "120"
+            )
+            inherited = manager.create(
+                TaskInput(device=DEVICE, number="44444", goal="API inherits web defaults")
+            )
+            assert (
+                inherited["input"]["max_call_seconds"] == 120
+                and inherited["config"]["voice"] == "cedar"
+            )
+            assert inherited["config"]["model"] == created["config"]["model"]
             assert created["config"]["options"]["transcription"]
             await page.locator('#task-create [name="number"]').fill("33333")
             await expect(page.locator('#task-create [name="contact_id"]')).to_have_value("")
@@ -232,6 +253,7 @@ async def verify(directory):
                         "goal_is_completion": True,
                         "language_and_duration": True,
                         "voice_selection_and_provider_switch": True,
+                        "persistent_call_defaults_and_api_inheritance": True,
                         "transcription_enabled": True,
                         "result_and_paginated_transcript": True,
                         "transcript_xss_safe": True,

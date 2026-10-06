@@ -106,3 +106,5 @@ curl -H "Authorization: Bearer $AGENTCALL_TOKEN" \
 响应包含 `model`、`status`（generating / completed / failed）、`text`、`error`、`updated_at`。成功或失败结果均保存在数据库，`GET /tasks/{task_id}` 的 `summary` 返回缓存，不触发模型调用。成功缓存不重复生成，并发请求合并为一次；失败后用 `POST /tasks/{task_id}/summary?retry=true` 显式重试。失败不会改变原始任务结果或通话状态，也不会自动替换为其他模型。接口错误信息不会包含 OpenAI 原始响应或凭据。
 
 请求 `store: false`，不启用工具。输入超过 500,000 字符时拒绝总结，不静默删减记录。服务关闭时取消未完成请求并保留可重试失败状态。总结使用模型 API，会产生相应用量；模型权限以当前账户为准。
+
+`service.default_max_call_seconds` 为持久化、无需重启即可应用的默认最长通话秒数（初始 300，范围大于 0 且不超过 3600）。通过 `PUT /settings` 保存。创建任务省略 `max_call_seconds` 时使用该值；显式参数优先。网页选择的模型和声音也保存到默认 `provider`，API 省略 `config` 时共同继承。

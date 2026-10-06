@@ -19,6 +19,7 @@ model_connect_seconds = 20
 answer_timeout_seconds = 60
 audio_timeout_seconds = 10
 hangup_timeout_seconds = 5
+default_max_call_seconds = 300
 
 [provider]
 provider = "openai"
