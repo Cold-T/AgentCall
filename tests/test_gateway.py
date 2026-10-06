@@ -46,10 +46,10 @@ def test_cli_sends_access_and_bearer_credentials(monkeypatch):
 
     monkeypatch.setattr(httpx, "request", request)
     result = CliRunner().invoke(
-        cli, ["--url", "https://agenticcall.coldt.uk/api", "--json", "health"]
+        cli, ["--url", "https://agentcall.coldt.uk/api", "--json", "health"]
     )
     assert result.exit_code == 0
-    assert str(requests[0].url) == "https://agenticcall.coldt.uk/api/health"
+    assert str(requests[0].url) == "https://agentcall.coldt.uk/api/health"
     assert requests[0].headers["CF-Access-Client-Id"] == "access-client"
     assert requests[0].headers["CF-Access-Client-Secret"] == "access-secret"
     assert requests[0].headers["Authorization"] == "Bearer origin-token"

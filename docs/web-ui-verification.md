@@ -1,6 +1,6 @@
 # 最简网页验证
 
-日期：2026-10-06（America/Chicago）。生产入口 `https://agenticcall.coldt.uk`，沿用固定 PIN、Cloudflare Tunnel 和 loopback nginx Gateway。
+日期：2026-10-06（America/Chicago）。生产入口 `https://agentcall.coldt.uk`，沿用固定 PIN、Cloudflare Tunnel 和 loopback nginx Gateway。
 
 ## 自动验证
 
@@ -57,7 +57,7 @@
 
 161 项完整 pytest 通过；最后调整认证 challenge 后，33 项相关测试再次通过。Ruff、格式和 JavaScript 语法检查通过。Chromium 模拟环境验证联系人 / 号码、目标和完成条件一致、语言 / 时长、自动转写、超过 1000 条事件的 transcript 分页、结果、外部文本安全展示、手机布局、PIN 文件更新和退出，JavaScript 错误为 0。
 
-确认无未结束通话和执行中任务后重启线上服务。通过真实 `https://agenticcall.coldt.uk`、正常 DNS 和 TLS 证书校验，在 390px 手机视口的 Chromium 验证私有文件 PIN 登录、三个标签页、默认背景、模型列表、历史加载与退出，JavaScript 错误为 0。没有发起真实通话或调用模型 API。
+确认无未结束通话和执行中任务后重启线上服务。通过真实 `https://agentcall.coldt.uk`、正常 DNS 和 TLS 证书校验，在 390px 手机视口的 Chromium 验证私有文件 PIN 登录、三个标签页、默认背景、模型列表、历史加载与退出，JavaScript 错误为 0。没有发起真实通话或调用模型 API。
 
 ## 永久通话背景
 

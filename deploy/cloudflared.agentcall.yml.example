@@ -2,6 +2,6 @@
 # Preserve the existing tunnel ID, credentials path and other hostname rules.
 # Deploy only after origin pin_auth=true has been verified with a private PIN.
 ingress:
-  - hostname: agenticcall.coldt.uk
+  - hostname: agentcall.coldt.uk
     service: http://127.0.0.1:8766
   - service: http_status:404

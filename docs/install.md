@@ -113,7 +113,7 @@ mSBC 需要 libsbc 和支持 transparent SCO 的控制器。依据 HFP codec 选
 
 ## 远程访问
 
-通过 `agenticcall.coldt.uk` 的 Cloudflare Tunnel、固定 PIN 和最简网页部署，见 [Cloudflare 部署说明](cloudflare.md) / [网页与设置](web-ui.md)。该方案本机 HTTP 回源，公网 HTTPS；必须先启用并验证固定 PIN 后再发布。
+通过 `agentcall.coldt.uk` 的 Cloudflare Tunnel、固定 PIN 和最简网页部署，见 [Cloudflare 部署说明](cloudflare.md) / [网页与设置](web-ui.md)。该方案本机 HTTP 回源，公网 HTTPS；必须先启用并验证固定 PIN 后再发布。
 
 默认仅监听 `127.0.0.1:8765`。若改为非 loopback 地址，必须设置 `AGENTCALL_TOKEN`（或配置 `token_env` 指定的环境变量）。HTTP 和音频 WebSocket 支持 `Authorization: Bearer TOKEN`；网页使用 PIN 换取私有会话 cookie。模型 API 密钥不返回客户端，非秘密配置可在认证后的设置页查询和修改。
 

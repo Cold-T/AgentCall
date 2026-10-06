@@ -1,6 +1,6 @@
 # 固定 PIN 公网部署验证
 
-日期：2026-10-06（America/Chicago）。域名 `agenticcall.coldt.uk`，复用现有 vaultwarden Tunnel；`vw.coldt.uk` 保持原回源和正常 HTTP 200。
+日期：2026-10-06（America/Chicago）。域名 `agentcall.coldt.uk`，复用现有 vaultwarden Tunnel；`vw.coldt.uk` 保持原回源和正常 HTTP 200。
 
 ## 部署
 
@@ -40,3 +40,9 @@ Cloudflare 公共 DNS 已返回代理地址；验证程序只替换该域名的�
 使用普通 DNS 解析和启用证书校验的实际公网 HTTPS 请求验证：匿名 / 错误 PIN 返回 401；正确 Bearer PIN 返回 200、`ready=true`；正确 Basic PIN 的 API 文档返回 200；认证 SSE 即时收到 `events.ready`；根路径返回 4 位 PIN 表单；4 位 PIN 登录创建 Secure cookie，退出后 API 返回 401。公网 HTTP 返回 301 并重定向到同路径 HTTPS，原有 Vaultwarden 返回 200。
 
 159 项测试通过，包括非法长度 / 非 ASCII PIN 拒绝、前导零、认证限流、PIN 轮换与会话失效、真实 TCP HTTP / SSE / 双向音频 WebSocket。Ruff、格式检查、nginx 语法与 Cloudflare ingress 验证通过。可选 Playwright 浏览器检查因未安装依赖未执行，网页登录协议已通过实际公网请求验证；本次未执行真实手机音频公网验收。
+
+## 域名统一（2026-10-06）
+
+公网入口统一为 `https://agentcall.coldt.uk`。已创建新域名 DNS 路由，同步实际 Tunnel、nginx 和仓库配置；nginx 语法与 Tunnel ingress 校验通过。公共 DNS 返回代理地址，本机普通 DNS 解析暂未完成。
+
+使用公共 DNS 返回的地址、真实 URL / Host / TLS SNI 和启用的证书校验，确认登录页 HTTP 200、匿名 API HTTP 401、HTTP 重定向至新域名 HTTPS；原有 Vaultwarden HTTP 200。公网 PIN 鉴权验证被自动审批拒绝（本机凭据向新域名发送），本次不宣称新域名登录流程完成验收。Gateway 的 9 项现有测试通过。

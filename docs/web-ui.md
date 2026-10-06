@@ -1,6 +1,6 @@
 # 三个标签页的通话网页
 
-入口：[agenticcall.coldt.uk](https://agenticcall.coldt.uk)。使用当前 4 位 PIN 登录，所有操作通过 `/api/` 调用后台服务。关闭浏览器后，通话任务继续执行。
+入口：[agentcall.coldt.uk](https://agentcall.coldt.uk)。使用当前 4 位 PIN 登录，所有操作通过 `/api/` 调用后台服务。关闭浏览器后，通话任务继续执行。
 
 | 标签页 | 功能 |
 | --- | --- |

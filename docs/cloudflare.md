@@ -1,6 +1,6 @@
 # Cloudflare Tunnel 与 4 位 PIN
 
-公网域名：`https://agenticcall.coldt.uk`。本机网关为 `http://127.0.0.1:8766`，后台只监听 `127.0.0.1:8765`。公网使用 HTTPS，本机回源使用 HTTP；不需要 Cloudflare Access、邮箱白名单或本机证书。
+公网域名：`https://agentcall.coldt.uk`。本机网关为 `http://127.0.0.1:8766`，后台只监听 `127.0.0.1:8765`。公网使用 HTTPS，本机回源使用 HTTP；不需要 Cloudflare Access、邮箱白名单或本机证书。
 
 - `/`：PIN 登录页；认证后显示最简操作网页，见 [网页说明](web-ui.md)。
 - `/api/`：全部业务 API，固定 PIN 认证。
@@ -26,7 +26,7 @@ PIN 严格使用 4 个 ASCII 数字，支持前导零；启动、设置接口和
 2. 部署 `deploy/agentcall.nginx.conf` 到 `/etc/nginx/conf.d/agentcall.conf`，先 `sudo nginx -t` 再 reload。网关仅监听 loopback，保留 SSE 流和 WebSocket Upgrade。
 3. 在 `/etc/cloudflared/config.yml` 的 catch-all 前加入示例 hostname 规则。当前使用已有 vaultwarden Tunnel，不修改原来的 `vw.coldt.uk → localhost:8000`。
 4. 验证匿名和错误 PIN 被拒绝、正确 PIN 成功，再验证 `cloudflared tunnel --config /etc/cloudflared/config.yml ingress validate` 和 `ingress rule` 对两个域名的路由。
-5. `cloudflared tunnel route dns vaultwarden agenticcall.coldt.uk`，安装新配置、重启 cloudflared，再通过公网执行认证与流式验证。正常 cloudflared CLI 使用既有 Tunnel 授权，不提取证书内的 token。
+5. `cloudflared tunnel route dns vaultwarden agentcall.coldt.uk`，安装新配置、重启 cloudflared，再通过公网执行认证与流式验证。正常 cloudflared CLI 使用既有 Tunnel 授权，不提取证书内的 token。
 
 公网 HTTP 请求由网关重定向到 HTTPS。本机 HTTP 连接保持不变。网关仅信任本机 Tunnel 传来的 CF-Connecting-IP，把原始客户端 IP 覆盖写入 X-Forwarded-For，后台仅信任 loopback 代理。不能直接向外开放网关端口，也不能添加删除 IP 头的 Cloudflare Transform 后仍假定每个访问者有独立限流身份。
 
@@ -34,13 +34,13 @@ PIN 严格使用 4 个 ASCII 数字，支持前导零；启动、设置接口和
 
 ```bash
 # curl 会提示输入 PIN，不要把 PIN 直接放进命令行。
-curl --fail -u pin https://agenticcall.coldt.uk/api/health
+curl --fail -u pin https://agentcall.coldt.uk/api/health
 
 # 本机 CLI：加载已设置的私有环境变量。
 set -a
 . ~/.config/agentcall/pin.env
 set +a
-export AGENTCALL_URL=https://agenticcall.coldt.uk/api
+export AGENTCALL_URL=https://agentcall.coldt.uk/api
 phone --json health
 phone watch
 ```
