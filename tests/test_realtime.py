@@ -59,6 +59,8 @@ async def test_ga_session_audio_context_tools_and_event_normalization(realtime_s
                 {
                     "type": "response.output_audio.delta",
                     "response_id": "r1",
+                    "item_id": "audio1",
+                    "content_index": 0,
                     "delta": base64.b64encode(bytes(38)).decode(),
                 }
             )
@@ -78,9 +80,18 @@ async def test_ga_session_audio_context_tools_and_event_normalization(realtime_s
             json.dumps({"type": "response.output_audio_transcript.done", "transcript": "hello"})
         )
         events = provider.events()
-        assert (await anext(events))["pcm"] == bytes(38)
+        audio = await anext(events)
+        assert audio["pcm"] == bytes(38) and audio["item_id"] == "audio1"
         assert (await anext(events))["name"] == "send_dtmf"
         assert (await anext(events))["text"] == "hello"
+        await provider.truncate_audio("audio1", 0, 150)
+        await asyncio.sleep(0.02)
+        assert messages[-1] == {
+            "type": "conversation.item.truncate",
+            "item_id": "audio1",
+            "content_index": 0,
+            "audio_end_ms": 150,
+        }
         await events.aclose()
     finally:
         await provider.close()

@@ -26,7 +26,12 @@ class AudioBridge:
         self.provider = provider
         self.input = PCMResampler(audio.rate, provider.input_rate)
         self.output = PCMResampler(provider.output_rate, audio.rate)
-        self.queue = asyncio.Queue(maxsize=8)
+        # Never wait for realtime playout in the provider event reader. Bound both bytes and items.
+        self.queue = asyncio.Queue(maxsize=4096)
+        self.max_pending_bytes = provider.output_rate * 2 * 60
+        self.generation = 0
+        self.items = {}
+        self.playing = None
         self.pending_bytes = 0
         self.received_bytes = 0
         self.sent_bytes = 0
@@ -38,36 +43,88 @@ class AudioBridge:
                 await self.provider.send_audio(pcm)
                 self.received_bytes += len(pcm)
 
-    async def enqueue(self, pcm):
+    async def enqueue(self, pcm, response_id=None, item_id=None, content_index=0):
+        if self.pending_bytes + len(pcm) > self.max_pending_bytes:
+            raise RuntimeError("model audio exceeded the bounded playback backlog")
+        key = (response_id, item_id, content_index)
+        item = self.items.setdefault(key, {"generated": 0, "tx_start": None, "tx_end": None})
+        item["generated"] += len(pcm)
         self.pending_bytes += len(pcm)
         try:
-            await self.queue.put(pcm)
+            self.queue.put_nowait((self.generation, key, pcm))
         except BaseException:
             self.pending_bytes -= len(pcm)
             raise
 
-    async def finish_response(self):
-        # Flush only at the API's output sequence boundary, never on local interruption policy.
-        await self.queue.put(None)
+    async def finish_response(self, response_id=None):
+        self.queue.put_nowait((self.generation, response_id, None))
+
+    async def interrupt(self):
+        self.generation += 1
+        while not self.queue.empty():
+            _, _, pcm = self.queue.get_nowait()
+            if pcm is not None:
+                self.pending_bytes -= len(pcm)
+            self.queue.task_done()
+        await self.audio.interrupt_output()
+        truncations = []
+        responses = {key[0] for key in self.items if key[0] is not None}
+        for key, item in self.items.items():
+            played = 0
+            if item["tx_start"] is not None:
+                played = (item["tx_end"] - item["tx_start"]) * 1000 / (self.audio.rate * 2)
+                if key == self.playing:
+                    played -= (
+                        max(0, self.audio.playout_until - asyncio.get_running_loop().time()) * 1000
+                    )
+            generated = item["generated"] * 1000 / (self.provider.output_rate * 2)
+            played = max(0, min(played, generated))
+            if key[1] and played < generated:
+                truncations.append((key[1], key[2], int(played)))
+        self.items.clear()
+        self.playing = None
+        self.output = PCMResampler(self.provider.output_rate, self.audio.rate)
+        return responses, truncations
+
+    async def write(self, pcm, item):
+        before = self.audio.tx_bytes
+        if item is not None and item["tx_start"] is None:
+            item["tx_start"] = before
+        await self.audio.send(pcm)
+        self.sent_bytes += self.audio.tx_bytes - before
+        if item is not None:
+            item["tx_end"] = self.audio.tx_bytes
 
     async def output_loop(self):
         while True:
-            pcm = await self.queue.get()
+            generation, key, pcm = await self.queue.get()
             try:
+                if generation != self.generation:
+                    continue
                 if pcm is None:
+                    item = self.items.get(self.playing)
                     converted = self.output.convert(b"", last=True)
                     self.output = PCMResampler(self.provider.output_rate, self.audio.rate)
                     if converted:
-                        await self.audio.send(converted)
-                        self.sent_bytes += len(converted)
+                        await self.write(converted, item)
+                    if generation != self.generation:
+                        continue
                     await self.audio.finish_output()
+                    if item is not None:
+                        item["tx_end"] = self.audio.tx_bytes
+                    await self.audio.wait_playout()
+                    if generation == self.generation:
+                        self.items = {k: v for k, v in self.items.items() if k[0] != key}
+                        self.playing = None
                 else:
+                    self.playing = key
+                    item = self.items[key]
                     converted = self.output.convert(pcm)
                     if converted:
-                        await self.audio.send(converted)
-                        self.sent_bytes += len(converted)
-                    self.pending_bytes -= len(pcm)
+                        await self.write(converted, item)
             finally:
+                if pcm is not None:
+                    self.pending_bytes -= len(pcm)
                 self.queue.task_done()
 
     async def drained(self):

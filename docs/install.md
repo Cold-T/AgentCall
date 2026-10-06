@@ -101,7 +101,7 @@ CLI 启动 pacat，将当前系统麦克风和扬声器接到服务的全双工�
 .venv/bin/phone audio CALL_ID --input outbound.pcm --output inbound.pcm --seconds 30
 ```
 
-手动音频 WebSocket 使用 SCO 原生 PCM 格式；AI 任务由服务自动桥接至模型 24kHz 音频，配置与命令见 [OpenAI 任务说明](tasks.md)。服务接受可变长度块，只按实际 MTU 或 mSBC 必要编码帧分帧，不增加固定时长 PCM 批次。不实现独立 VAD、插话策略或主动清空音频缓存。
+手动音频 WebSocket 使用 SCO 原生 PCM 格式；AI 任务由服务自动桥接至模型 24kHz 音频，配置与命令见 [OpenAI 任务说明](tasks.md)。服务接受可变长度块，只按实际 MTU 或 mSBC 必要编码帧分帧，不增加固定时长 PCM 批次。不实现独立 VAD；根据模型 API 的插话事件停止本机播放并清除未发送的旧音频。
 
 ## HFP 冲突与适配器
 

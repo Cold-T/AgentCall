@@ -31,7 +31,7 @@ Gemini `options` 支持 `temperature`、`topP`、`topK`、`maxOutputTokens`、`t
 
 以 `setupComplete` 确认建连，手机与 SCO 就绪后才发送第一轮触发。Gemini PCM 输入 16kHz、输出 24kHz，与 SCO 原生 8kHz / 16kHz 自动重采样。输出事件中的所有内容 part 都处理，转写分片独立记录，不作为音频前置步骤。工具声明使用 `parametersJsonSchema` 和 BLOCKING；工具结果用 ID 与名称匹配，Gemini 自动继续，后续统一接口的 start_response 不再次发送首轮提示。
 
-Gemini 没有 OpenAI response ID，适配器为每轮生成内部 ID。generationComplete 只记录事件，正常挂断等待 turnComplete；IN_PROGRESS 不代表轮次已空闲，继续等待 IDLE。插话只记录 API 事件，不清空音频。API 取消工具时，取消尚在等待的挂断请求；已发送的 DTMF、已保存的模型结果或已完成的挂断无法撤销。goAway 记录即将关闭通知，不自动恢复会话或切换 provider，实际断开后按模型断开结束。
+Gemini 没有 OpenAI response ID，适配器为每轮生成内部 ID。generationComplete 只记录事件，正常挂断等待 turnComplete；IN_PROGRESS 不代表轮次已空闲，继续等待 IDLE。API 报告 interrupted 后清除本机未播放音频、停止当前发送并结束被打断轮次；新输出使用新的内部轮次 ID。Gemini 上下文由 Live API 管理，没有 OpenAI 的客户端 truncate 消息。API 取消工具时，取消尚在等待的挂断请求；已发送的 DTMF、已保存的模型结果或已完成的挂断无法撤销。goAway 记录即将关闭通知，不自动恢复会话或切换 provider，实际断开后按模型断开结束。
 
 协议依据：[WebSocket 参考](https://ai.google.dev/api/live)、[能力说明](https://ai.google.dev/gemini-api/docs/live-api/capabilities)、[工具说明](https://ai.google.dev/gemini-api/docs/live-api/tools)。JSON Schema 字段参照 [v1beta discovery schema](https://generativelanguage.googleapis.com/$discovery/rest?version=v1beta)；认证头使用 [官方 Python SDK 的方式](https://github.com/googleapis/python-genai/blob/main/google/genai/_api_client.py)。
 

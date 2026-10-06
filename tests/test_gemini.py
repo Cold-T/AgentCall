@@ -114,7 +114,6 @@ async def test_all_content_parts_turns_transcription_and_in_progress(gemini_serv
                     "inputTranscription": {"text": "user words", "finished": True},
                     "outputTranscription": {"text": "model words"},
                     "generationComplete": True,
-                    "interrupted": True,
                     "turnComplete": True,
                     "interactionStatus": "IN_PROGRESS",
                 }
@@ -122,7 +121,7 @@ async def test_all_content_parts_turns_transcription_and_in_progress(gemini_serv
         )
     )
     events = provider.events()
-    got = [await anext(events) for _ in range(9)]
+    got = [await anext(events) for _ in range(8)]
     assert [e["kind"] for e in got] == [
         "response_started",
         "audio",
@@ -130,7 +129,6 @@ async def test_all_content_parts_turns_transcription_and_in_progress(gemini_serv
         "audio",
         "transcript",
         "transcript",
-        "turn",
         "turn",
         "turn",
     ]
@@ -148,6 +146,40 @@ async def test_all_content_parts_turns_transcription_and_in_progress(gemini_serv
     assert (await anext(events))["kind"] == "response_done"
     await events.aclose()
     await provider.close()
+
+
+async def test_interrupted_turn_discards_stale_audio_and_allows_new_turn(gemini_server):
+    endpoint, _, sockets = gemini_server
+    provider = GeminiLive(ProviderConfig(provider="gemini"), "test-key", endpoint=endpoint)
+    await provider.open("task", [])
+    blob = {"inlineData": {"mimeType": "audio/pcm;rate=24000", "data": "AAAAAA=="}}
+    events = provider.events()
+    try:
+        await sockets[0].send(json.dumps({"serverContent": {"modelTurn": {"parts": [blob]}}}))
+        old = await anext(events)
+        assert old["kind"] == "response_started"
+        assert (await anext(events))["kind"] == "audio"
+        await sockets[0].send(
+            json.dumps(
+                {
+                    "serverContent": {
+                        "interrupted": True,
+                        "modelTurn": {"parts": [blob]},
+                        "turnComplete": True,
+                    }
+                }
+            )
+        )
+        assert (await anext(events))["event"] == "interrupted"
+        ended = await anext(events)
+        assert ended["status"] == "cancelled" and ended["response_id"] == old["response_id"]
+        await sockets[0].send(json.dumps({"serverContent": {"modelTurn": {"parts": [blob]}}}))
+        new = await asyncio.wait_for(anext(events), 0.5)
+        assert new["kind"] == "response_started" and new["response_id"] != old["response_id"]
+        assert (await anext(events))["kind"] == "audio"
+    finally:
+        await events.aclose()
+        await provider.close()
 
 
 async def test_api_tool_cancellation_and_goaway_are_normalized(gemini_server):

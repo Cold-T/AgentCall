@@ -1,4 +1,4 @@
-"""Full duplex native s16le PCM. No VAD, duration batching, or buffer clearing."""
+"""Full duplex native s16le PCM with provider-triggered playback interruption."""
 
 import asyncio
 import logging
@@ -33,6 +33,7 @@ class SCOAudio:
         self.closed = False
         self.write_lock = asyncio.Lock()
         self.playout_until = 0.0
+        self.output_generation = 0
         log.info(
             "SCO ready: input/output=s16le mono %sHz codec=%s mtu=%s", self.rate, codec, self.mtu
         )
@@ -106,18 +107,23 @@ class SCOAudio:
                     if self.sock.fileno() >= 0:
                         loop.remove_writer(self.sock.fileno())
 
-    async def send(self, pcm):
+    async def send(self, pcm, generation=None):
         if len(pcm) % 2:
             raise ValueError("s16le requires whole 16-bit samples")
         if self.closed:
             raise ConnectionError("SCO closed")
+        generation = self.output_generation if generation is None else generation
         async with self.write_lock:
+            if generation != self.output_generation:
+                return
             self.pending_bytes = len(pcm)
             try:
                 if self.codec == 1:
                     # Forward immediately; split only at the controller's MTU.
                     size = self.mtu - self.mtu % 2
                     for offset in range(0, len(pcm), size):
+                        if generation != self.output_generation:
+                            break
                         part = pcm[offset : offset + size]
                         await self.send_packet(part, len(part) / (self.rate * 2))
                         self.pending_bytes -= len(part)
@@ -126,6 +132,8 @@ class SCOAudio:
                     self.tx_buffer.extend(pcm)
                     self.pending_bytes = 0
                     while len(self.tx_buffer) >= msbc.PCM_BYTES:
+                        if generation != self.output_generation:
+                            break
                         frame = bytes(self.tx_buffer[: msbc.PCM_BYTES])
                         del self.tx_buffer[: msbc.PCM_BYTES]
                         packet = self.encoder.encode(frame)
@@ -138,12 +146,19 @@ class SCOAudio:
             finally:
                 self.pending_bytes = 0
 
+    async def interrupt_output(self):
+        self.output_generation += 1
+        # Finish at most the current SCO packet / complete mSBC frame, never split a frame.
+        async with self.write_lock:
+            self.tx_buffer.clear()
+
     async def finish_output(self):
+        generation = self.output_generation
         if self.codec == 2 and self.tx_buffer:
             # Padding is required to encode the final partial mSBC frame.
             padded = bytes(self.tx_buffer) + bytes(msbc.PCM_BYTES - len(self.tx_buffer))
             self.tx_buffer.clear()
-            await self.send(padded)
+            await self.send(padded, generation)
 
     async def wait_playout(self):
         remaining = self.playout_until - asyncio.get_running_loop().time()

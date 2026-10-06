@@ -198,6 +198,17 @@ class GeminiLive:
                 yield {"kind": "tool_cancelled", "call_ids": ids}
             content = event.get("serverContent", {})
             functions = event.get("toolCall", {}).get("functionCalls", [])
+            if content.get("interrupted"):
+                yield {"kind": "turn", "event": "interrupted", "response_id": self.turn}
+                if self.turn:
+                    yield {"kind": "response_done", "response_id": self.turn, "status": "cancelled"}
+                self.turn = None
+                content = {
+                    k: v
+                    for k, v in content.items()
+                    if k not in ("modelTurn", "outputTranscription")
+                }
+                functions = []
             if content.get("modelTurn") or content.get("outputTranscription") or functions:
                 if started := self.start_turn():
                     yield started
@@ -252,8 +263,6 @@ class GeminiLive:
                     "arguments": arguments,
                     "response_id": self.turn,
                 }
-            if content.get("interrupted"):
-                yield {"kind": "turn", "event": "interrupted", "response_id": self.turn}
             if content.get("generationComplete"):
                 yield {"kind": "turn", "event": "generation_complete", "response_id": self.turn}
             if content.get("turnComplete"):
@@ -281,3 +290,7 @@ class GeminiLive:
         self.closing = True
         if self.ws:
             await self.ws.close()
+
+    async def truncate_audio(self, item_id, content_index, audio_end_ms):
+        # Live API manages its interrupted turn context; there is no client truncate event.
+        pass

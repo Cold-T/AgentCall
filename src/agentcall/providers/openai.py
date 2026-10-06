@@ -112,6 +112,16 @@ class OpenAIRealtime:
     async def start_response(self):
         await self.send({"type": "response.create"})
 
+    async def truncate_audio(self, item_id, content_index, audio_end_ms):
+        await self.send(
+            {
+                "type": "conversation.item.truncate",
+                "item_id": item_id,
+                "content_index": content_index,
+                "audio_end_ms": audio_end_ms,
+            }
+        )
+
     async def update_context(self, text):
         await self.send(
             {
@@ -148,7 +158,13 @@ class OpenAIRealtime:
                         raise ValueError("odd PCM length")
                 except (ValueError, KeyError) as exc:
                     raise ProviderError("OpenAI sent invalid PCM audio") from exc
-                yield {"kind": "audio", "pcm": pcm, **common}
+                yield {
+                    "kind": "audio",
+                    "pcm": pcm,
+                    "item_id": event.get("item_id"),
+                    "content_index": event.get("content_index", 0),
+                    **common,
+                }
             elif kind in ("response.output_item.done", "response.function_call_arguments.done"):
                 item = event.get("item", event)
                 if (

@@ -182,6 +182,7 @@ class TaskRun:
         self.cancel_reason = "service_stopped"
         self.response_events = {}
         self.responses = set()
+        self.interrupted_responses = set()
         self.continue_response = False
         self.hangup_job = None
         self.hangup_call_id = None
@@ -360,11 +361,20 @@ class TaskRun:
             if kind == "audio":
                 if self.bridge is None:
                     raise ProviderError("model produced audio before phone/audio readiness")
-                await self.bridge.enqueue(event["pcm"])
+                if event.get("response_id") in self.interrupted_responses:
+                    continue
+                await self.bridge.enqueue(
+                    event["pcm"],
+                    event.get("response_id"),
+                    event.get("item_id"),
+                    event.get("content_index", 0),
+                )
                 if event["pcm"]:
                     self.audio_chunks += 1
                     self.last_audio_response = event.get("response_id")
             elif kind == "tool":
+                if event.get("response_id") in self.interrupted_responses:
+                    continue
                 await self.tool(event)
             elif kind == "tool_cancelled":
                 self.manager.event(self.id, "model.tool_cancelled", **event)
@@ -374,11 +384,31 @@ class TaskRun:
             elif kind == "response_started":
                 self.responses.add(event["response_id"])
                 self.response_events.setdefault(event["response_id"], asyncio.Event())
+            elif kind == "turn" and event.get("event") in (
+                "input_audio_buffer.speech_started",
+                "interrupted",
+            ):
+                self.interrupted_responses.update(self.responses)
+                self.continue_response = False
+                self.last_audio_response = None
+                if self.result_audio_floor is not None:
+                    self.result_audio_floor = self.audio_chunks
+                if self.hangup_job and not self.hangup_requested:
+                    self.hangup_job.cancel()
+                    self.hangup_job = None
+                    self.hangup_call_id = None
+                if self.bridge:
+                    responses, truncations = await self.bridge.interrupt()
+                    self.interrupted_responses.update(responses)
+                    for item_id, content_index, audio_end_ms in truncations:
+                        await self.provider.truncate_audio(item_id, content_index, audio_end_ms)
+                    self.manager.event(self.id, "task.audio_interrupted", items=len(truncations))
+                self.manager.event(self.id, "model.turn", **event)
             elif kind == "response_done":
                 response_id = event["response_id"]
                 self.responses.discard(response_id)
-                if self.bridge:
-                    await self.bridge.finish_response()
+                if self.bridge and response_id not in self.interrupted_responses:
+                    await self.bridge.finish_response(response_id)
                 self.response_events.setdefault(response_id, asyncio.Event()).set()
                 self.manager.event(self.id, "model.response", **event)
                 if event.get("status") == "failed":
@@ -391,6 +421,8 @@ class TaskRun:
                 if event.get("code") != "conversation_already_has_active_response":
                     raise ProviderError("model returned an error event")
             else:
+                if kind == "transcript" and event.get("response_id") in self.interrupted_responses:
+                    event = {**event, "interrupted": True}
                 self.manager.event(self.id, "model." + kind, **event)
         if not self.done.is_set():
             raise ProviderError("model session ended")
