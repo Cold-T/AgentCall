@@ -75,7 +75,10 @@ class HFPConnection:
                 await asyncio.get_running_loop().sock_sendall(
                     self.sock, (command + "\r").encode("ascii")
                 )
-                return await asyncio.wait_for(future, self.timeout)
+                # Direct awaiting preserves cancellation when OK arrives in the same loop turn
+                # (Python 3.11 wait_for can otherwise consume that cancellation).
+                async with asyncio.timeout(self.timeout):
+                    return await future
             except TimeoutError as exc:
                 # Late OK must never be mistaken for the next command's response.
                 await self.close()

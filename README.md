@@ -4,7 +4,7 @@
 
 项目计划基于 handsfree-linux 扩展，复用蓝牙与联系人实现并将核心功能从 GUI 解耦。通话控制和音频使用纯蓝牙 HFP / SCO，不依赖 ADB、手机 App 或屏幕操作；联系人和手机历史另用 PBAP。
 
-**当前状态：CP2 无界面蓝牙服务已完成（软件实现与自动验证通过）；Android / iPhone 完整真机验收统一安排在 CP6，手机兼容性仍未验证。RTS provider 和 AI 任务模块尚未实现。**
+**当前状态：CP2 蓝牙服务与 CP3 OpenAI 任务闭环已完成软件实现和协议自动验证。真实 OpenAI API 验证保留待执行；Android / iPhone 真机验收安排在 CP6，手机兼容性仍未验证。Gemini 在 CP4 接入。**
 
 ## 架构
 
@@ -37,6 +37,8 @@ Linux 后台服务
 
 - [安装、配对、手动通话与双向音频](docs/install.md)
 - [已实现 HTTP API / 音频 WebSocket](docs/api.md)
+- [OpenAI 任务配置与操作](docs/tasks.md)
+- [CP3 软件与协议验证](docs/cp3-verification.md)
 - [软件验证记录](docs/verification.md)
 - [CP6 Android / iPhone 真机验收步骤](docs/acceptance.md)
 

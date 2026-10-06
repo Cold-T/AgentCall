@@ -3,7 +3,7 @@ import hmac
 import json
 from contextlib import asynccontextmanager, suppress
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -11,6 +11,8 @@ from agentcall.bluetooth.hfp import HFPError
 from agentcall.service.backend import Backend
 from agentcall.service.config import Config
 from agentcall.storage.store import Store
+from agentcall.tasks.manager import TaskManager
+from agentcall.tasks.models import TaskInput
 
 
 class Dial(BaseModel):
@@ -23,6 +25,10 @@ class Digits(BaseModel):
     digits: str = Field(pattern=r"^[0-9*#]{1,64}$")
 
 
+class Context(BaseModel):
+    text: str = Field(min_length=1, max_length=16000)
+
+
 class Confirmation(BaseModel):
     accept: bool
 
@@ -31,23 +37,27 @@ def authorized(header, token):
     return not token or hmac.compare_digest((header or "").encode(), f"Bearer {token}".encode())
 
 
-def create_app(config=None, backend=None):
+def create_app(config=None, backend=None, task_manager=None):
     config = config or Config()
     owned_store = backend is None
     backend = backend or Backend(config, Store(config.database))
+    task_manager = task_manager or TaskManager(backend, config)
 
     @asynccontextmanager
     async def lifespan(app):
         await backend.start()
+        await task_manager.start()
         try:
             yield
         finally:
+            await task_manager.close()
             await backend.close()
             if owned_store:
                 backend.store.close()
 
     app = FastAPI(title="AgentCall Bluetooth service", version="0.1.0", lifespan=lifespan)
     app.state.backend = backend
+    app.state.tasks = task_manager
 
     @app.middleware("http")
     async def auth(request: Request, call_next):
@@ -182,6 +192,38 @@ def create_app(config=None, backend=None):
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    @app.post("/tasks", status_code=201)
+    async def create_task(body: TaskInput):
+        return task_manager.create(body)
+
+    @app.get("/tasks")
+    async def tasks():
+        return [backend.store.task(i) for i in backend.store.task_ids()]
+
+    @app.get("/tasks/{task_id}")
+    async def task(task_id: str):
+        result = backend.store.task(task_id)
+        run = task_manager.runs.get(task_id)
+        result["audio"] = run.bridge.status() if run and run.bridge else None
+        return result
+
+    @app.get("/tasks/{task_id}/events")
+    async def task_events(task_id: str):
+        return backend.store.task_events(task_id)
+
+    @app.post("/tasks/{task_id}/start", status_code=202)
+    async def start_task(task_id: str, idempotency_key: str | None = Header(default=None)):
+        return task_manager.start_task(task_id, idempotency_key)
+
+    @app.post("/tasks/{task_id}/cancel", status_code=202)
+    async def cancel_task(task_id: str):
+        return await task_manager.cancel(task_id)
+
+    @app.post("/tasks/{task_id}/context")
+    async def context(task_id: str, body: Context):
+        await task_manager.update_context(task_id, body.text)
+        return {"accepted": True}
 
     @app.websocket("/calls/{call_id}/audio")
     async def audio_socket(websocket: WebSocket, call_id: str):
