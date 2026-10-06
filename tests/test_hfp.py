@@ -154,3 +154,19 @@ async def test_optional_command_timeout_cannot_emit_ready():
     finally:
         await connection.close()
         await phone.close()
+
+
+async def test_cancellation_racing_completed_at_response_is_not_swallowed(link):
+    connection, phone, _ = link
+    phone.ignored.add("ATD123;")
+    dial = asyncio.create_task(connection.dial("123"))
+    await until(lambda: connection.pending is not None)
+    # Deliver OK and cancellation before the command task resumes, as can occur during cleanup.
+    connection.pending.set_result([])
+    dial.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await dial
+    assert connection.closed
+    with pytest.raises(HFPError, match="not ready"):
+        await connection.dial("456")
+    assert "ATD456;" not in phone.commands
