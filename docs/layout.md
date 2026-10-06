@@ -1,19 +1,19 @@
-# 建议目录结构
-
-以下为实现阶段的目标结构，当前仓库只初始化项目文档。
+# 当前目录结构
 
 ```text
-src/
-  bluetooth/   # handsfree-linux 适配、HFP、PBAP
-  audio/       # SCO、编解码、重采样、双向桥接
-  providers/   # 统一接口、OpenAI、Gemini
-  tasks/       # 状态、执行、模型工具
-  storage/     # SQLite 模型和查询
-  api/         # HTTP API、SSE
-  cli/         # 命令行客户端
-  service/     # 启动、配置、生命周期
-tests/
+src/agentcall/
+  bluetooth/   # BlueZ D-Bus、配对、HFP SLC、PBAP
+  audio/       # SCO socket、双向 PCM、mSBC 分帧
+  storage/     # SQLite 联系人、手机历史、项目通话、事件
+  api/         # HTTP API、SSE、音频 WebSocket
+  cli/         # HTTP 客户端、实时音频探针
+  service/     # 配置、生命周期、设备重连
+  vendor/      # 固定上游 AT / mSBC 模块及 MIT 许可
+tests/         # 协议、PBAP、持久化、D-Bus、真实网络验证
+deploy/        # systemd 用户服务示例
+docs/          # 规格、安装、API、软件验证、真机验收
 config.example.toml
+requirements-dev.lock
 ```
 
-Python 包命名和具体目录在实现时确定。蓝牙代码若依赖 GLib 主循环，通过独立线程或事件循环接入后台服务。
+下一阶段将增加 `providers/` 和 `tasks/`，并增加格式转换与重采样。当前使用 asyncio 和 dbus-next，无 Qt / GLib 依赖。蓝牙设备管理适配可替换，协议核心与 HTTP / CLI 分离。

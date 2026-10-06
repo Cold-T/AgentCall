@@ -1,0 +1,15 @@
+[Unit]
+Description=AgentCall headless Bluetooth calling service
+After=bluetooth.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/AgentCall
+ExecStart=%h/AgentCall/.venv/bin/agentcall-service --config %h/.config/agentcall/config.toml
+EnvironmentFile=-%h/.config/agentcall/environment
+Restart=on-failure
+RestartSec=5
+UMask=0077
+
+[Install]
+WantedBy=default.target

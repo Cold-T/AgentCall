@@ -31,3 +31,9 @@ recordings/
 .vscode/
 .idea/
 .DS_Store
+
+# Phone data and audio probes
+*.sqlite3-*
+*.sqlite-*
+*.pcm
+*.wav
