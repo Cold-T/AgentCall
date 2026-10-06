@@ -32,7 +32,7 @@ device 支持 MAC 或 `dev_AA_BB_CC_DD_EE_FF`；API 路径用其中一种，不�
 
 音频 WebSocket 每个 SCO 链路只允许一个客户端。必须使用服务报告的采样率，不接受独立格式声明或隐式重采样；每条 PCM 消息最多 256 KiB，必须为完整 16-bit 样本。输入与输出独立运行。WebSocket 退出不挂断通话。
 
-SSE 提供实时增量事件，没有断点重放。慢客户端超过有界事件队列时收到 `events.overflow` 并结束，应重新连接并查询当前状态。后台还会将事件持久化到 SQLite；完整事件查询属于后续 API checkpoint。
+SSE 提供实时增量事件，没有断点重放。慢客户端超过有界事件队列时收到 `events.overflow` 并结束，应重新连接并查询当前状态。后台将事件持久化到 SQLite，可通过 GET /events/history 查询。
 
 
 ## AI 任务
@@ -49,3 +49,40 @@ SSE 提供实时增量事件，没有断点重放。慢客户端超过有界事�
 状态为 saved → queued → preparing → dialing → in_call → finalizing → ended。`outcome` 是执行结束原因，`model_result.status` 是模型报告结果，`call.state` 是手机实际状态；三者分别保存。任务 / 工具事件也通过现有 SSE 发布。密钥仅由服务环境读取，任务不接受凭据或自定义模型端点。任务结果 schema 仅允许本地片段引用。详见 [任务说明](tasks.md)。
 
 `config.provider` 支持 `openai` / `gemini`，两家共用上述任务接口。模型、声音、专属 options 与凭据选择规则见 [Gemini 文档](gemini.md)。转写事件中 Gemini 的 `delta=true` 表示文本分片；按事件顺序展示即可，不用于替代音频输入。
+
+## CP5 查询与分页
+
+新增接口均使用相同 Bearer 认证，OpenAPI 在 API 操作中声明 BearerAuth，便于携带 token 调用。所有业务先提供 HTTP API，CLI 映射见 [完整 CLI 帮助](cli.md)。
+
+| 接口 | 查询与响应 |
+| --- | --- |
+| `GET /devices/saved` | SQLite 设备标识、last_observed 快照、updated_at；不代表目前仍然连接 |
+| `GET /devices/{device}` | 能查询到当前设备时 live=true；否则返回已存快照 live=false |
+| `GET /contacts/{contact_id}` | 姓名、号码、所属设备、同步时间、原始 vCard |
+| `GET /contacts` | q、device、limit、offset |
+| `GET /calls` | device、source=project / pbap、limit、offset；省略 source 合并展示 |
+| `GET /calls/current` | 可带 device 筛选当前通话 |
+| `GET /calls/{id}` | 可带 source 指定项目 / PBAP；历史 PBAP 不附加当前通话音频 |
+| `GET /tasks` | state、device、outcome、limit、offset |
+| `GET /tasks/{id}/result` | id、state、outcome、model_result、error、call_id、call、ended_at |
+| `GET /tasks/{id}/tools` | limit、offset；模型工具 call_id、name、原始 arguments JSON、result、state |
+| `GET /tasks/{id}/events` | after_id、kind、limit；递增 id、time、kind、data |
+| `GET /events/history` | after_id、limit、kind、device、call_id、task_id；按持久 event_id 递增 |
+| `GET /events` | 同样支持 kind、device、call_id、task_id 筛选，始终发送 ready / overflow 控制事件 |
+
+列表保持数组响应，默认 limit=100，允许 1–1000，offset ≥ 0；分页结束为空数组。事件 after_id ≥ 0，为排他游标，取上一页最后一项的游标继续查询。非法 limit / offset / source / task state 返回 422，未知业务 ID 返回 400。
+
+项目 duration_seconds 根据手机确认接通时间到记录结束时间计算；活动通话计算到查询时刻，未确认接通为 null。service_restart / unknown 的记录截止时间不证明手机已挂断。PBAP 不推断缺失时长；保留手机原始时间（可能没有时区）及 vCard。合并列表按项目 started_at / PBAP synced_at 倒序，不将手机未带时区的通话时间当 UTC 排序。记录不跨来源去重，source 始终保留。
+
+全局事件新增整数 event_id，避免配对确认的 id（请求 UUID）覆盖数据库游标。历史与实时的 event_id 一致；原有配对 id 继续用于 confirmation 接口。任务工具事件中的 tool_call_id 是模型调用 ID，call_id 是实际项目电话 ID；工具查询列表的 call_id 仍是原始工具去重 ID。
+
+SQLite 增量建表并从旧联系人 / 通话 / 重连意图 / 任务补齐设备标识，保留已有记录。快照包含观测到的 HFP 能力、连接与音频信息以及最近 PBAP 同步结果；设备不可用时只返回明确标记的历史数据，不推断当前能力。PBAP 无权限仍保留已有联系人，直接拨号不受影响。
+
+```bash
+curl -H "Authorization: Bearer $AGENTCALL_TOKEN" \
+  'http://127.0.0.1:8765/calls?source=project&limit=20'
+curl -H "Authorization: Bearer $AGENTCALL_TOKEN" \
+  'http://127.0.0.1:8765/events/history?after_id=0&limit=100'
+```
+
+401 返回 WWW-Authenticate: Bearer；HTTP、SSE、OpenAPI / docs 和音频 WebSocket 均受认证保护。OpenAI / Gemini 凭据与服务端完整配置不提供查询接口，也不返回客户端。真实 API 和真机兼容性验收边界见 checkpoint 验证记录。

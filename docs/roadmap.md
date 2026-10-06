@@ -39,13 +39,15 @@ CP3 / CP4 已使用模拟手机完成 provider 软件与协议验证；两家真
 
 真实 API 未访问；见 [CP4 验证记录](cp4-verification.md)。
 
-## CP5 完整 CLI / API
+## CP5 完整 CLI / API（软件验证已完成）
 
-- [ ] 设备、联系人、记录、任务、结果、接听 / 挂断 / DTMF 和 SSE。
-- [ ] 创建 / 启动立即返回 ID，启动幂等，重试不重复拨号。
-- [ ] CLI 易读输出和 `--json`，远程 Bearer token，凭据只在服务端读取。
-- [ ] 完整 SQLite 数据和来源管理。
-- [ ] 完整 CLI 帮助和 API 文档。
+- [x] 设备、联系人、记录、任务、结果、接听 / 挂断 / DTMF 和 SSE。
+- [x] 创建 / 启动立即返回 ID，启动幂等，重试不重复拨号。
+- [x] CLI 易读输出和 `--json`，远程 Bearer token，凭据只在服务端读取。
+- [x] 完整 SQLite 数据和来源管理。
+- [x] 完整 CLI 帮助和 API 文档。
+
+见 [CP5 验证记录](cp5-verification.md)。真实 API 验证保留待执行，真机验收仍在 CP6。
 
 ## CP6 稳定性与 Android / iPhone 真机验收
 

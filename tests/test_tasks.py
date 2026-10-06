@@ -392,7 +392,24 @@ async def test_complete_http_task_model_audio_tools_hangup_and_records(rig):
     states = [e["data"]["state"] for e in events if e["kind"] == "task.state"]
     assert states == ["preparing", "dialing", "in_call", "finalizing", "ended"]
     assert any(e["kind"] == "model.transcript" for e in events)
-    assert "test-key" not in json.dumps(result) + json.dumps(events)
+    queried = (await rig.client.get(f"/tasks/{task_id}/result")).json()
+    assert (
+        queried["model_result"] == result["model_result"]
+        and queried["call_id"] == result["call_id"]
+    )
+    tools = (await rig.client.get(f"/tasks/{task_id}/tools")).json()
+    assert [tool["name"] for tool in tools] == ["send_dtmf", "finish_task", "hangup"]
+    assert all(tool["state"] == "done" and tool["result"]["ok"] for tool in tools)
+    history = (
+        await rig.client.get(
+            "/events/history",
+            params={"task_id": task_id, "call_id": result["call_id"], "kind": "tool.result"},
+        )
+    ).json()
+    assert [event["tool_call_id"] for event in history] == ["digits1", "finish1", "hangup1"]
+    assert "test-key" not in json.dumps(result) + json.dumps(events) + json.dumps(
+        tools
+    ) + json.dumps(history)
 
 
 async def test_same_device_queued_tasks_and_idempotent_retries(rig):

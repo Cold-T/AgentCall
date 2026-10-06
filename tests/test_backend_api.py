@@ -1,56 +1,12 @@
 import asyncio
-import socket
 from types import SimpleNamespace
 
-import httpx
 import pytest
-import pytest_asyncio
-from conftest import DEVICE, Phone, until
+from conftest import DEVICE, until
 
-from agentcall.api.app import create_app
-from agentcall.bluetooth.hfp import HFPConnection
 from agentcall.service.backend import Backend
 from agentcall.service.config import Config
 from agentcall.storage.store import Store
-
-
-@pytest_asyncio.fixture
-async def service(monkeypatch):
-    store = Store(":memory:")
-    config = Config()
-    backend = Backend(config, store)
-    host, peer = socket.socketpair()
-    phone = Phone(peer)
-    calls = []
-
-    async def dbus_call(*args, **kwargs):
-        calls.append((args, kwargs))
-        if args[2] == "Disconnect":
-            await backend.connections[DEVICE].close()
-        return []
-
-    async def devices():
-        return [{"id": DEVICE.rsplit("/", 1)[-1], "path": DEVICE}]
-
-    async def close():
-        pass
-
-    backend.bluez = SimpleNamespace(
-        call=dbus_call, devices=devices, close=close, agent=SimpleNamespace(pending={})
-    )
-    monkeypatch.setattr(backend, "ensure_audio", lambda device: None)
-    connection = HFPConnection(host, DEVICE, backend.emit, timeout=0.3)
-    backend.connections[DEVICE] = connection
-    await connection.start()
-    backend.running = True
-    app = create_app(config, backend)
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        yield backend, connection, phone, client, calls
-    await backend.close()
-    await phone.close()
-    store.close()
 
 
 async def test_http_call_lifecycle_and_db_sources(service):
