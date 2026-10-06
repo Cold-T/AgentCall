@@ -206,13 +206,15 @@ $('#watch').onclick = () => run(async () => {
 });
 const labels = {
   host:'监听地址', port:'监听端口', root_path:'API 路径前缀', adapter:'蓝牙适配器', codec:'SCO 编码', obex_bus:'OBEX D-Bus', database:'SQLite 数据库路径',
-  token_env:'PIN 环境变量名（只读）', pin_auth:'PIN 认证（只读）', reconnect_seconds:'重连间隔（秒）', api_key_env:'OpenAI 密钥环境变量名', gemini_api_key_env:'Gemini 密钥环境变量名',
+  pin_auth:'PIN 认证（只读）', reconnect_seconds:'重连间隔（秒）',
   model_connect_seconds:'模型连接超时（秒）', answer_timeout_seconds:'接通超时（秒）', audio_timeout_seconds:'音频就绪超时（秒）', hangup_timeout_seconds:'结束语等待超时（秒）'
 };
+const hiddenServiceFields = new Set(['token_env', 'api_key_env', 'gemini_api_key_env']);
 async function loadSettings() {
   const response = await api('/settings'); savedSettings = response.saved;
   const parent = $('#service-fields'); parent.replaceChildren();
   for (const [name, value] of Object.entries(savedSettings.service)) {
+    if (hiddenServiceFields.has(name)) continue;
     const label = document.createElement('label'); label.textContent = labels[name] || name;
     let input;
     const choices = {codec:['cvsd','msbc'], obex_bus:['session','system']};
@@ -232,18 +234,22 @@ $('#settings-form').elements.provider.onchange = event => {
 };
 bindForm('#settings-form', async form => {
   const data = values(form); const service = {};
-  for (const [key, value] of Object.entries(savedSettings.service)) service[key] = typeof value === 'boolean' ? value : typeof value === 'number' ? Number(data['service_' + key]) : data['service_' + key];
+  for (const [key, value] of Object.entries(savedSettings.service)) service[key] = hiddenServiceFields.has(key) || typeof value === 'boolean' ? value : typeof value === 'number' ? Number(data['service_' + key]) : data['service_' + key];
   await api('/settings', 'PUT', {service, provider:{provider:data.provider, model:data.model, voice:data.voice, language:data.language, options:jsonObject(data.options)}});
   await loadSettings(); notice('配置已保存');
 });
-bindForm('#credentials', async form => {
-  const data = values(form); if (data.pin !== data.confirm) throw new Error('两次 PIN 不一致'); delete data.confirm;
+async function saveCredentials(form) {
+  const data = values(form);
+  if ('confirm' in data && data.pin !== data.confirm) throw new Error('两次 PIN 不一致');
+  delete data.confirm;
   for (const key of Object.keys(data)) if (!data[key]) delete data[key];
   if (!Object.keys(data).length) throw new Error('请填写需要修改的凭据');
   const result = await api('/settings/credentials', 'PUT', data); form.reset();
   if (result.login_required) { location.reload(); return; }
-  await loadSettings(); notice('凭据已保存');
-});
+  await loadSettings(); notice('API Key 已保存');
+}
+bindForm('#api-keys', saveCredentials);
+bindForm('#credentials', saveCredentials);
 run(async () => {
   const status = await api('/health'); $('#health').textContent = status.ready ? `服务已就绪 · ${status.adapter} · ${status.codec}` : '蓝牙未就绪：' + (status.bluetooth_error || '等待连接');
   await refreshDevices(); await currentCalls();

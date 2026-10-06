@@ -17,7 +17,7 @@
 2. 读取设备、搜索联系人，选联系人填入任务。
 3. 填写目标、背景、资料、完成条件，创建保存任务，查询任务与结果。
 4. 修改默认 provider 为 Gemini，修改语言、参数和超时，保存并从文件重载验证。
-5. 写入模拟 API 密钥，页面只显示已配置状态，输入框清空。
+5. 设置页不显示环境变量名，直接填写两家的模拟 API Key 并保存；页面只显示已配置状态，输入框清空。保存普通配置后内部凭据映射保持有效。
 6. SSE 收到 events.ready 与主动发出的 verification.probe。
 7. 模拟号码拨号，模拟手机报告 active 后发送 DTMF，再挂断；检查实际 ATD / AT+VTS 指令。
 8. 修改模拟 PIN，被注销，使用新 PIN 重新登录，再退出。
@@ -35,6 +35,7 @@
 | 正确用户 PIN 登录 | HTTP 200，opaque HttpOnly / Secure / SameSite=Strict cookie |
 | 已认证页面 | 展示完整操作界面 |
 | 设置查询 | 16 个服务字段、5 个 provider 字段；未回显 PIN 或密钥 |
+| 网页 API Key 设置 | 隐藏环境变量名，独立 OpenAI / Gemini 密钥输入框和保存按钮；公网只读检查通过 |
 | 服务状态 | ready=true |
 | 联系人 | 206 条号码记录；浏览器查询正常 |
 | 公网 SSE | 收到 events.ready |
