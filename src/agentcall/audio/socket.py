@@ -13,6 +13,7 @@ _SOL_SOCKET = 1
 _SO_SNDTIMEO = 13
 _SOL_BLUETOOTH = 274
 _BT_VOICE = 11
+_BT_DEFER_SETUP = 7
 # Voice settings: kernel passes raw bytes (mSBC) vs. converts CVSD↔PCM
 _BT_VOICE_TRANSPARENT = 0x0003
 _BT_VOICE_CVSD_16BIT = 0x0060
@@ -94,7 +95,7 @@ def _sco_connect(
             libc.close(fd)
 
 
-def sco_listen(local_mac, voice_setting):
+def sco_listen(local_mac, voice_setting, defer_setup=False):
     """Listen for phone-initiated SCO; the returned fd is owned by the caller."""
     libc = _load_libc()
     fd = libc.socket(_AF_BLUETOOTH, _SOCK_SEQPACKET, _BTPROTO_SCO)
@@ -107,9 +108,22 @@ def sco_listen(local_mac, voice_setting):
             raise OSError(_ct.get_errno(), "BT_VOICE failed")
         if libc.bind(fd, _ct.byref(local), _ct.sizeof(local)) < 0:
             raise OSError(_ct.get_errno(), "SCO bind failed")
+        if defer_setup:
+            defer = _ct.c_uint32(1)
+            if libc.setsockopt(fd, _SOL_BLUETOOTH, _BT_DEFER_SETUP, _ct.byref(defer), 4) < 0:
+                raise OSError(_ct.get_errno(), "SCO deferred setup failed")
         if libc.listen(fd, 5) < 0:
             raise OSError(_ct.get_errno(), "SCO listen failed")
         return fd
     except BaseException:
         libc.close(fd)
         raise
+
+
+def sco_authorize(sock, voice_setting):
+    """Set the negotiated codec on a deferred incoming link, then authorize it.
+
+    The kernel's authorization read returns zero; this is not an audio EOF.
+    """
+    sock.setsockopt(_SOL_BLUETOOTH, _BT_VOICE, _struct.pack("@H", voice_setting))
+    sock.recv(1)

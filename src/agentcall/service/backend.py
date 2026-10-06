@@ -7,7 +7,7 @@ import time
 
 from dbus_next import Variant
 
-from agentcall.audio.socket import _sco_connect, sco_listen
+from agentcall.audio.socket import _sco_connect, sco_authorize, sco_listen
 from agentcall.audio.transport import SCOAudio
 from agentcall.bluetooth.dbus import AG_UUID, AGENT_PATH, BlueZ
 from agentcall.bluetooth.hfp import HFPConnection, HFPError
@@ -386,16 +386,19 @@ class Backend:
             connection = self.connections.get(device)
             if not connection:
                 return
+            # SCO can arrive immediately after AT+BCS; listen before negotiation.
+            # Deferred setup lets each accepted link use the negotiated codec.
+            local = await self.bluez.adapter_address()
+            fd = sco_listen(local, 0x0060, defer_setup=True)
+            listener = socket.socket(fileno=fd)
+            listener.setblocking(False)
+            self.emit("audio.listening", device=device)
             if not connection.codec_confirmed.is_set():
                 await connection.command(at.cmd_bcc())
                 # Both CVSD and mSBC require successful BCS confirmation when negotiated.
                 await asyncio.wait_for(connection.codec_confirmed.wait(), 5)
             codec = connection.codec
             voice = 0x0003 if codec == 2 else 0x0060
-            local = await self.bluez.adapter_address()
-            fd = sco_listen(local, voice)
-            listener = socket.socket(fileno=fd)
-            listener.setblocking(False)
             remote = device.rsplit("dev_", 1)[1].replace("_", ":")
             sock = None
             # Accept phone-initiated audio first; retry outbound SCO for an active call.
@@ -420,6 +423,11 @@ class Backend:
                     # CPython returns a bare MAC string for BTPROTO_SCO, unlike RFCOMM.
                     peer_mac = peer if isinstance(peer, str) else peer[0]
                     if peer_mac.upper() == remote.upper():
+                        try:
+                            sco_authorize(accepted, voice)
+                        except BaseException:
+                            accepted.close()
+                            raise
                         sock = accepted
                         break
                     accepted.close()

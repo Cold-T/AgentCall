@@ -1,5 +1,7 @@
 import asyncio
 import socket
+
+import pytest
 from types import SimpleNamespace
 
 from conftest import DEVICE
@@ -29,10 +31,11 @@ async def test_incoming_sco_accepts_native_mac_string(monkeypatch):
         return host, "11:22:33:44:55:66"  # native CPython SCO sockaddr representation
 
     backend.bluez.adapter_address = address
-    monkeypatch.setattr("agentcall.service.backend.sco_listen", lambda *args: listener.detach())
+    monkeypatch.setattr("agentcall.service.backend.sco_listen", lambda *args, **kwargs: listener.detach())
     monkeypatch.setattr(
         "agentcall.service.backend.SCOAudio", lambda sock, codec: SCOAudio(sock, codec, mtu=48)
     )
+    monkeypatch.setattr("agentcall.service.backend.sco_authorize", lambda *args: None)
     monkeypatch.setattr(asyncio.get_running_loop(), "sock_accept", accept)
     try:
         await backend.open_audio(DEVICE)
@@ -74,11 +77,12 @@ async def test_audio_listener_survives_long_ringing_before_answer(monkeypatch):
         raise AssertionError("outbound SCO must not run before answer")
 
     backend.bluez.adapter_address = address
-    monkeypatch.setattr("agentcall.service.backend.sco_listen", lambda *args: listener.detach())
+    monkeypatch.setattr("agentcall.service.backend.sco_listen", lambda *args, **kwargs: listener.detach())
     monkeypatch.setattr("agentcall.service.backend._sco_connect", no_outbound)
     monkeypatch.setattr(
         "agentcall.service.backend.SCOAudio", lambda sock, codec: SCOAudio(sock, codec, mtu=48)
     )
+    monkeypatch.setattr("agentcall.service.backend.sco_authorize", lambda *args: None)
     monkeypatch.setattr(asyncio.get_running_loop(), "sock_accept", accept)
     try:
         await backend.open_audio(DEVICE)
@@ -128,3 +132,106 @@ def test_sco_connector_preserves_errno_and_closes_failed_fd(monkeypatch):
     assert libc.closed == [42]
     assert _sco_connect("11:22:33:44:55:66") == -1
     assert libc.closed == [42, 42]
+
+
+@pytest.mark.parametrize("selected_codec, voice", [(1, 0x0060), (2, 0x0003)])
+async def test_listens_before_codec_confirmation_and_authorizes_selected_codec(
+    monkeypatch, selected_codec, voice
+):
+    store = Store(":memory:")
+    backend = Backend(Config(), store)
+    confirmed = asyncio.Event()
+    listener, listener_peer = socket.socketpair()
+    host, peer = socket.socketpair(type=socket.SOCK_SEQPACKET)
+    steps = []
+    connection = SimpleNamespace(codec_confirmed=confirmed, codec=1, closed=False, state="alerting")
+
+    async def address():
+        return "AA:BB:CC:DD:EE:FF"
+
+    def listen(local, voice, *, defer_setup):
+        assert defer_setup
+        steps.append("listen")
+        return listener.detach()
+
+    async def command(value):
+        assert steps == ["listen"]  # SCO may arrive while the BCS exchange is completing.
+        connection.codec = selected_codec
+        confirmed.set()
+        steps.append("codec")
+
+    async def accept(sock):
+        return host, "11:22:33:44:55:66"
+
+    def authorize(sock, setting):
+        assert setting == voice
+        steps.append("authorize")
+
+    def audio(sock, codec):
+        assert codec == selected_codec and steps == ["listen", "codec", "authorize"]
+        return SCOAudio(sock, 1, mtu=48)  # Avoid requiring libsbc on CI.
+
+    connection.command = command
+    backend.connections[DEVICE] = connection
+    backend.current[DEVICE] = store.new_call(DEVICE, "123", "outgoing", "alerting")
+    backend.bluez.adapter_address = address
+    monkeypatch.setattr("agentcall.service.backend.sco_listen", listen)
+    monkeypatch.setattr("agentcall.service.backend.sco_authorize", authorize)
+    monkeypatch.setattr("agentcall.service.backend.SCOAudio", audio)
+    monkeypatch.setattr(asyncio.get_running_loop(), "sock_accept", accept)
+    try:
+        await backend.open_audio(DEVICE)
+        assert backend.audio[DEVICE].status()["ready"]
+    finally:
+        backend.stop_audio(DEVICE)
+        host.close()
+        peer.close()
+        listener.close()
+        listener_peer.close()
+        store.close()
+
+
+def test_deferred_authorization_zero_read_is_not_audio_eof():
+    from agentcall.audio.socket import sco_authorize
+
+    class Socket:
+        def setsockopt(self, level, option, value):
+            assert (level, option, value) == (274, 11, b"\x03\x00")
+            self.configured = True
+
+        def recv(self, size):
+            assert self.configured and size == 1
+            return b""  # Linux BT_CONNECT2 authorizes the connection with a zero read.
+
+    sco_authorize(Socket(), 0x0003)
+
+
+def test_listener_enables_deferred_setup_after_bind_before_listen(monkeypatch):
+    import ctypes
+    from agentcall.audio.socket import sco_listen
+
+    steps = []
+
+    class Libc:
+        def socket(self, *args):
+            return 42
+
+        def setsockopt(self, fd, level, option, value, size):
+            steps.append(option)
+            if option == 7:
+                assert steps == [11, "bind", 7]
+                assert size == 4
+                assert ctypes.cast(value, ctypes.POINTER(ctypes.c_uint32)).contents.value == 1
+            return 0
+
+        def bind(self, *args):
+            steps.append("bind")
+            return 0
+
+        def listen(self, *args):
+            steps.append("listen")
+            return 0
+
+    monkeypatch.setattr("agentcall.audio.socket._load_libc", Libc)
+    assert sco_listen("AA:BB:CC:DD:EE:FF", 0x0060, defer_setup=True) == 42
+    assert steps == [11, "bind", 7, "listen"]
