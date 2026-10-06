@@ -8,7 +8,8 @@
 | 发现设备 | `POST /discovery/start`、`POST /discovery/stop` | 显式扫描控制 |
 | 手机列表 | `GET /devices` | BlueZ 连接、HFP 就绪、通话状态、音频、重连意图 |
 | 配对 | `POST /devices/{device}/pair` | 数值确认通过 SSE + confirmation 接口 |
-| 配对待确认 | `GET /pairing` | 待确认请求 ID |
+| 允许手机主动配对 | `POST /discoverability/start`、`POST /discoverability/stop` | 开启 180 秒可发现、可配对窗口；使用 AgentCall 确认代理；停止禁止新的主动配对 |
+| 配对待确认 | `GET /pairing` | `pending_ids` 及 `requests`（设备、配对码）；`incoming_pairing_enabled` 表示主动配对窗口是否有效 |
 | 配对确认 | `POST /pairing/{request_id}` | `{"accept":true}`；用户需先核对手机数值 |
 | 连接 / 断开 | `POST /devices/{device}/connect`、`.../disconnect` | 连接启用持久化重连意图；手动断开清除意图 |
 | PBAP 同步 | `POST /devices/{device}/sync` | 联系人数 / 历史数 / 各 phonebook 错误 |

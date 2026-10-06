@@ -238,9 +238,17 @@ def create_app(config=None, backend=None, task_manager=None):
         )
         return {"action": action, "accepted": True}
 
+    @app.post("/discoverability/{action}", tags=["devices"])
+    async def discoverability(action: Literal["start", "stop"]):
+        return await backend.discoverability(action)
+
     @app.get("/pairing", tags=["devices"])
     async def pairing():
-        return {"pending_ids": list(backend.bluez.agent.pending)}
+        return {
+            "pending_ids": list(backend.bluez.agent.pending),
+            "requests": list(getattr(backend.bluez.agent, "details", {}).values()),
+            "incoming_pairing_enabled": backend.incoming_pairing_enabled(),
+        }
 
     @app.post("/pairing/{request_id}", tags=["devices"])
     async def confirm(request_id: str, body: Confirmation):

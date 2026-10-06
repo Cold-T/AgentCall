@@ -20,6 +20,8 @@ def unpack(value):
         return unpack(value.value)
     if isinstance(value, dict):
         return {str(k): unpack(v) for k, v in value.items()}
+    if isinstance(value, (bytes, bytearray)):
+        return list(value)
     if isinstance(value, list):
         return [unpack(v) for v in value]
     return value
@@ -73,13 +75,15 @@ class Agent(ServiceInterface):
         super().__init__("org.bluez.Agent1")
         self.backend = backend
         self.pending = {}
+        self.details = {}
 
     async def confirmation(self, device, **data):
-        if device not in self.backend.pairing:
+        if device not in self.backend.pairing and not self.backend.incoming_pairing_enabled():
             raise DBusError("org.bluez.Error.Rejected", "pairing was not requested via API")
         request_id = str(uuid4())
         future = asyncio.get_running_loop().create_future()
         self.pending[request_id] = future
+        self.details[request_id] = {"id": request_id, "device": device, **data}
         self.backend.emit("pairing.confirmation", device=device, id=request_id, **data)
         try:
             if not await asyncio.wait_for(future, 60):
@@ -88,6 +92,7 @@ class Agent(ServiceInterface):
             raise DBusError("org.bluez.Error.Canceled", "pairing confirmation timeout") from None
         finally:
             self.pending.pop(request_id, None)
+            self.details.pop(request_id, None)
 
     @method()
     async def RequestConfirmation(self, device: "o", passkey: "u"):

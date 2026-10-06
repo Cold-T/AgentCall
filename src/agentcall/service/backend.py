@@ -3,10 +3,13 @@ import logging
 import os
 import re
 import socket
+import time
+
+from dbus_next import Variant
 
 from agentcall.audio.socket import _sco_connect, sco_listen
 from agentcall.audio.transport import SCOAudio
-from agentcall.bluetooth.dbus import AG_UUID, BlueZ
+from agentcall.bluetooth.dbus import AG_UUID, AGENT_PATH, BlueZ
 from agentcall.bluetooth.hfp import HFPConnection, HFPError
 from agentcall.bluetooth.pbap import PBAPClient
 from agentcall.vendor import at, msbc
@@ -27,6 +30,7 @@ class Backend:
         self.listeners = set()
         self.claims = {}
         self.pairing = set()
+        self.incoming_pairing_until = 0.0
         self.error = None
         self.running = False
         self.device_locks = {}
@@ -34,6 +38,50 @@ class Backend:
         self.audio_setup_lock = asyncio.Lock()
         self.pbap = PBAPClient(self.bluez.obex_call)
         self.retry = None
+
+    def incoming_pairing_enabled(self):
+        return time.monotonic() < self.incoming_pairing_until
+
+    async def discoverability(self, action):
+        if not self.running:
+            raise RuntimeError(self.error or "BlueZ unavailable")
+        path = f"/org/bluez/{self.config.adapter}"
+        self.incoming_pairing_until = 0.0
+        if action == "start":
+            # Incoming pairing must reach our confirmation agent, not a desktop agent.
+            await self.bluez.call(
+                "/org/bluez",
+                "org.bluez.AgentManager1",
+                "RequestDefaultAgent",
+                "o",
+                [AGENT_PATH],
+            )
+            for name, value in (
+                ("DiscoverableTimeout", Variant("u", 180)),
+                ("Pairable", Variant("b", True)),
+                ("Discoverable", Variant("b", True)),
+            ):
+                await self.bluez.call(
+                    path,
+                    "org.freedesktop.DBus.Properties",
+                    "Set",
+                    "ssv",
+                    ["org.bluez.Adapter1", name, value],
+                )
+            self.incoming_pairing_until = time.monotonic() + 180
+        else:
+            await self.bluez.call(
+                path,
+                "org.freedesktop.DBus.Properties",
+                "Set",
+                "ssv",
+                ["org.bluez.Adapter1", "Discoverable", Variant("b", False)],
+            )
+        return {
+            "action": action,
+            "accepted": True,
+            "timeout_seconds": 180 if action == "start" else 0,
+        }
 
     def spawn(self, coroutine):
         task = asyncio.create_task(coroutine)

@@ -61,6 +61,8 @@ curl --fail-with-body --silent --show-error -X POST \
   "${AGENTCALL_URL}/discovery/stop"
 ```
 
+For a phone-initiated pairing request, use `POST /discoverability/start` instead of scanning. This opens a 180-second discoverable/pairable window and selects AgentCall as BlueZ's default confirmation agent. Have the user select the host's Bluetooth name (currently `zeroclaw`) on the phone. Poll `GET /pairing`; `requests` includes each request's `id`, `device`, and `passkey` when supplied. Wait for the user to verify the matching code before accepting through `POST /pairing/{id}`. Never auto-accept. Use `POST /discoverability/stop` when finished. Outside this window, incoming requests are rejected unless pairing was explicitly initiated through the device API. A successful pairing still needs device status verification (`hfp_ready`) before placing a call. If the phone reports an invalid old pairing, have the user forget the host on the phone before pairing again; do not erase other devices' bonds.
+
 ## Make a task call
 
 1. Check readiness (`GET /health`) and list devices (`GET /devices`). If the requested phone is missing, use the discovery flow above; listing alone does not scan. Verify the selected phone reports `hfp_ready: true` before starting a call. Use a device identifier returned by the service. A device can be a Bluetooth MAC such as `AA:BB:CC:DD:EE:FF` or the supported `dev_AA_BB_CC_DD_EE_FF` form.

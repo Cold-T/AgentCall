@@ -99,11 +99,16 @@ $('#refresh-devices').onclick = () => run(refreshDevices, $('#refresh-devices'))
 document.querySelectorAll('[data-discovery]').forEach(item => item.onclick = () => run(async () => {
   await api('/discovery/' + item.dataset.discovery, 'POST'); notice('设备搜索状态已更新'); await refreshDevices();
 }, item));
+document.querySelectorAll('[data-discoverability]').forEach(item => item.onclick = () => run(async () => {
+  await api('/discoverability/' + item.dataset.discoverability, 'POST');
+  notice(item.dataset.discoverability === 'start' ? '已允许手机主动配对，持续 3 分钟。请在手机选择 zeroclaw，再点击配对确认核对配对码。' : '已关闭可发现和手机主动配对。');
+}, item));
 $('#refresh-pairing').onclick = () => run(async () => {
   const data = await api('/pairing'); const parent = $('#pairing-list'); parent.replaceChildren();
   if (!data.pending_ids.length) { parent.textContent = '没有等待确认的配对'; return; }
   for (const id of data.pending_ids) {
-    const p = document.createElement('p'); p.textContent = '请核对手机上的配对信息：' + id + ' ';
+    const request = (data.requests || []).find(row => row.id === id);
+    const p = document.createElement('p'); p.textContent = request ? '请核对手机配对码：' + (request.passkey || '手机上的配对请求') + ' · ' + request.device + ' ' : '请核对手机上的配对信息：' + id + ' ';
     for (const [label, accept] of [['允许', true], ['拒绝', false]]) p.append(button(label, async () => {
       await api('/pairing/' + enc(id), 'POST', {accept}); p.remove(); notice('已处理配对确认'); await refreshDevices();
     }));
