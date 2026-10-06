@@ -21,6 +21,27 @@ cp config.example.toml config.toml
 
 PBAP 通过当前用户的 session bus 访问 obexd，可先执行 `systemctl --user start obex`；不同发行版可能使用 `obexd` / `bluez-obexd` 单元。不可用和权限拒绝会返回具体错误，直接号码拨打不依赖 PBAP。
 
+### 无桌面主机的 OBEX
+
+BlueZ 5.83 的 obexd Bluetooth 服务插件通过 logind 检查用户是否有活动 seat。在只有 SSH / linger 的无桌面主机上，可能出现 `No transport driver registered` 和 `obex_server_init failed`；只启动用户服务不能解决。它的本地电话簿服务插件还可能需要 Evolution 数据源，和读取手机联系人无关。
+
+可显式部署 system bus 模式；AgentCall 仍以普通用户运行。默认 `obex_bus="session"` 不变，也不会自动尝试提权或切换 bus。以下步骤需要管理员授权：
+
+1. 检查 `/usr/libexec/bluetooth/obexd --help` 支持 `--system-bus`；若安装路径不同，修改 `deploy/agentcall-obex.service`。
+2. 将 `deploy/agentcall-obex.conf.example` 中 `AGENTCALL_USER` 替换为实际服务用户。该策略只允许 root 持有 OBEX 名称、该用户向 OBEX 发送请求；这也授予该用户访问 obexd 其他可用客户端功能的权限。
+3. 将替换后的文件安装到 `/etc/dbus-1/system.d/agentcall-obex.conf`，将单元安装到 `/etc/systemd/system/agentcall-obex.service`，然后执行：
+
+   ```bash
+   sudo systemctl reload dbus
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now agentcall-obex
+   busctl --system introspect org.bluez.obex /org/bluez/obex org.bluez.obex.Client1
+   ```
+
+4. 在服务配置 `[service]` 下设置 `obex_bus="system"`，重启 AgentCall，再执行 `phone sync DEVICE`。手机 PBAP 授权仍需确认。OBEX 客户端接口就绪不代表手机同步成功，应检查同步返回及实际联系人。
+
+示例单元仅加载 Bluetooth、Object Push 和 filesystem 服务插件以满足 obexd 初始化要求，不依赖 Evolution、不启用自动接受文件。它仍注册 Object Push 服务，应仅在受控主机上使用。回退时将 `obex_bus` 改回 `session`、停用 `agentcall-obex`、删除上述策略及单元、重新加载 D-Bus / systemd，再重启 AgentCall。
+
 ## 配对、连接与手动通话
 
 ```bash

@@ -216,7 +216,10 @@ class BlueZ:
 
     async def obex_call(self, path, interface, member, signature="", body=None):
         if self.obex is None:
-            self.obex = await MessageBus(bus_type=BusType.SESSION).connect()
+            bus_type = (
+                BusType.SYSTEM if self.backend.config.obex_bus == "system" else BusType.SESSION
+            )
+            self.obex = await MessageBus(bus_type=bus_type).connect()
         return await rpc(self.obex, "org.bluez.obex", path, interface, member, signature, body)
 
     async def devices(self):

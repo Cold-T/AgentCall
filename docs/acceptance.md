@@ -57,4 +57,4 @@ CP2 的完成条件已调整为软件实现与自动验证，现已完成。通�
 
 ## 验收结果
 
-两个平台均 **未执行实际验收，安排在 CP6**。用户已确认两种设备可用于验收；CP2 完成表示软件实现与自动验证通过，手机兼容性仍未验证。软件验证记录见 [verification.md](verification.md)。
+Android 已开始真机验收，配对、HFP、拨号、SCO、提示音输出与挂断已实际验证；详细结果及未完成项见 [android-acceptance.md](android-acceptance.md)。iPhone 尚未执行。CP6 尚未完成。软件验证记录见 [verification.md](verification.md)。

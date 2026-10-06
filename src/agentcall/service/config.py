@@ -12,6 +12,7 @@ class Config:
     port: int = 8765
     adapter: str = "hci0"
     codec: str = "cvsd"
+    obex_bus: str = "session"
     database: str = "~/.local/share/agentcall/agentcall.sqlite3"
     token_env: str = "AGENTCALL_TOKEN"
     reconnect_seconds: float = 5
@@ -33,6 +34,8 @@ class Config:
         config = cls(**data.get("service", {}), provider=ProviderConfig(**data.get("provider", {})))
         if config.codec not in ("cvsd", "msbc"):
             raise ValueError("codec must be cvsd or msbc")
+        if config.obex_bus not in ("session", "system"):
+            raise ValueError("obex_bus must be session or system")
         if config.host not in ("127.0.0.1", "localhost", "::1") and not config.token:
             raise ValueError("non-loopback binding requires a Bearer token environment variable")
         for name in (

@@ -4,6 +4,8 @@ port = 8765
 adapter = "hci0"
 # Start with CVSD for acceptance. mSBC requires libsbc and transparent SCO support.
 codec = "cvsd"
+# session: normal user obexd; system: explicitly deployed headless obexd.
+obex_bus = "session"
 database = "~/.local/share/agentcall/agentcall.sqlite3"
 token_env = "AGENTCALL_TOKEN"
 reconnect_seconds = 5
