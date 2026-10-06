@@ -128,7 +128,9 @@ def instructions(task):
         "Only use the supplied facts; ask the other person when information is missing. "
         "Use send_dtmf for phone menus. Submit finish_task with completed, partial or incomplete "
         "and an object matching result_schema. Completion is separate from phone state. "
-        "After submitting the result, give a brief closing statement, then call hangup. "
+        "After finish_task succeeds, speak a brief closing statement aloud to the other person, "
+        "then call hangup. Do not use a tool-only response to hang up without spoken closing "
+        "audio. Text in hangup(reason) is internal and is never spoken to the other person. "
         "Never infer whether the phone is connected or disconnected. Task context:\n"
         + json.dumps(
             {
