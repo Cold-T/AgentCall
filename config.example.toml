@@ -25,7 +25,7 @@ provider = "openai"
 model = "gpt-realtime-2.1"
 voice = "marin"
 language = "中文"
-# Optional: options.transcription = { model = "gpt-4o-mini-transcribe" }
+# Transcription defaults to gpt-4o-mini-transcribe; override options.transcription if needed.
 # Input turn detection and interruption are handled by the API.
 
 # Starting point for phone audio with false speech triggers; tune per environment.

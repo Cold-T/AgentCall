@@ -65,3 +65,7 @@ phone --json task show TASK_ID
 ### 开场静默
 
 电话确认接通且 SCO 音频就绪后，输出播放先静默 1 秒，再播放开场白。等待仅发生在通话开头，后续轮次不额外延迟；输入音频与模型事件读取继续运行，期间插话仍可清除排队回复，取消和最长通话时限照常生效。模型生成可与等待并行，实际开口也可能因网络或生成耗时晚于 1 秒。`task.opening_pause` 事件记录本次开场等待秒数。
+
+### API 与网页一致的默认值
+
+新建任务省略或留空 `completion_criteria` 时，后台自动使用 `goal`；显式填写的具体完成条件保留。OpenAI 默认启用 `transcription: {model: "gpt-4o-mini-transcribe"}`，Gemini 默认启用 `inputAudioTranscription: {}` 和 `outputAudioTranscription: {}`，切换 provider 时也使用对应默认值。网页不再自行补齐转写参数，两种入口共同使用后台默认配置。显式指定的转写参数保持有效（OpenAI 可显式传 `transcription: null` 关闭）；原有任务的配置快照不改写。API 创建后默认仅保存，不自动拨号。

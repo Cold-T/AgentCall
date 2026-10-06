@@ -172,7 +172,7 @@ form.onsubmit = event => {
     if (!data.voice) throw new Error('请选择声音。');
     const goal = data.goal.trim();
     if (!goal) throw new Error('请填写通话目标。');
-    const options = {...selected.options, ...(selected.provider === 'openai' ? {transcription:selected.options?.transcription || {model:'gpt-4o-mini-transcribe'}} : {inputAudioTranscription:{}, outputAudioTranscription:{}})};
+    const options = {...selected.options};
     const body = {
       device:data.device, ...(data.contact_id ? {contact_id:data.contact_id} : {number:data.number.trim()}),
       max_call_seconds:Number(data.max_call_seconds), goal, completion_criteria:goal, ...(data.background.trim() ? {background:data.background} : {}),

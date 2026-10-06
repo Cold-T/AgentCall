@@ -42,6 +42,7 @@ async def test_ga_session_audio_context_tools_and_event_normalization(realtime_s
         session = messages[0]["session"]
         assert session["type"] == "realtime" and session["output_modalities"] == ["audio"]
         assert session["audio"]["input"]["turn_detection"]["interrupt_response"]
+        assert session["audio"]["input"]["transcription"] == {"model": "gpt-4o-mini-transcribe"}
         assert session["audio"]["output"]["format"] == {"type": "audio/pcm", "rate": 24000}
         assert len(session["tools"]) == 3
         await provider.send_audio(bytes(18))

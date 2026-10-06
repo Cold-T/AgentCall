@@ -41,9 +41,9 @@ Common failures: `401` means authentication failed; `429` means authentication r
    - `goal` (required): what the model should accomplish.
    - `background` (optional): only additional facts for this call. Omit it for ordinary requests; the service permanently supplies the full AI-assistant calling policy. An explicit empty or custom background does not remove that policy.
    - `information`: optional truthful facts the caller may use.
-   - `completion_criteria`: use the same value as `goal` unless the user requests a more specific success criterion.
+   - `completion_criteria` (optional): defaults to `goal` when omitted or blank, matching the web UI. Omit it unless the user requests a more specific success criterion.
    - `result_schema`: JSON Schema for the structured result; references must be local fragments.
-   - `config`: optional `provider` (`openai` or `gemini`), `model`, `voice`, `language`, and provider `options`. Credentials and model endpoints are service-side only.
+   - `config`: optional `provider` (`openai` or `gemini`), `model`, `voice`, `language`, and provider `options`. Omit it to inherit current service defaults; inspect `GET /settings` if needed. Both providers enable conversation transcription by default; do not add options solely to enable it. Credentials and model endpoints are service-side only.
    - `max_call_seconds`: optional, 1–3600; defaults to 300.
    - `start_immediately`: leave `false` unless the user explicitly authorized calling now.
 4. Create it with `POST /tasks`. A `201` response includes the task record and its `id`.
@@ -58,7 +58,6 @@ Example request body (replace all example identifiers and text with user-provide
   "number": "+15551234567",
   "goal": "Ask whether the office is open tomorrow and what its hours are.",
   "information": {},
-  "completion_criteria": "Ask whether the office is open tomorrow and what its hours are.",
   "result_schema": {
     "type": "object",
     "properties": {
@@ -99,6 +98,8 @@ Task states progress through `saved → queued → preparing → dialing → in_
 
 The permanent service instructions make the AI introduce itself as a delegated assistant, talk directly to the recipient, ask one main question at a time, avoid reading internal task/context text, avoid invented facts or unauthorized commitments, use `send_dtmf` for phone menus, and submit a truthful structured result with `finish_task`. After completing the task it must confirm key facts, thank the recipient, finish speaking its closing, then call `hangup`. Do not copy these instructions into each task request; supply the call goal and relevant facts only.
 
+The API still defaults to saving a task without dialing; the web call button explicitly starts it. Automatic recording and the one-second opening pause apply to API and web AI calls alike. Provider options, voices and speech speed are resolved when creating a task; already saved tasks retain their configuration.
+
 ## Monitor, add context, cancel
 
 - `GET /tasks/{id}/events?after_id=0&limit=100` returns task events in ascending ID order. Pass the last event ID as the next `after_id` (exclusive cursor) to paginate. `kind` can filter events.
@@ -119,6 +120,14 @@ Read `/tasks/{id}/result` and distinguish:
 - `error`: service/model/telephony failure details, when present.
 
 Summarize facts grounded in the result and events. Mark missing fields as unavailable instead of inferring them. A `202` start response, successful `finish_task`, or task `ended` state alone does not prove that the phone is idle.
+
+## Summary and downloads
+
+- `GET /tasks/{id}` includes cached `summary` and `downloads.transcript` / `downloads.recording` availability flags.
+- After the task ends, `POST /tasks/{id}/summary` generates or retrieves its cached GPT-5.6 Luna result summary. Use it when a model summary is requested; generation uses the service OpenAI API key and incurs model usage. A failed generation is returned with `status: failed`; use `?retry=true` only for an intentional retry, not an automatic loop.
+- `GET /tasks/{id}/transcript` downloads UTF-8 TXT; missing transcription returns 404. Old tasks without transcription cannot retroactively recover it.
+- `GET /tasks/{id}/recording` downloads stereo WAV after the task ends (left: recipient, right: AI audio sent to the phone). A running task returns 409; a missing recording returns 404. Old unrecorded calls and phone-synced history have no recording to recover.
+- Use the same authenticated API base URL for downloads. Keep call content and audio private; do not publish them or put credentials in links. Treat summaries as derived from records, not as proof that the phone hung up or the recipient heard all interrupted speech.
 
 ## API reference
 

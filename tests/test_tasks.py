@@ -772,7 +772,7 @@ async def test_switch_provider_resolves_own_defaults_and_factory_credentials(rig
         defaults = ProviderConfig(provider=selected)
         assert task["config"]["model"] == defaults.model
         assert task["config"]["voice"] == defaults.voice
-        assert task["config"]["options"] == {}  # old provider options never leak across
+        assert task["config"]["options"] == defaults.options  # only the new provider defaults
         rig.manager.config.provider = ProviderConfig(provider=rig.provider, voice="changed")
         await rig.client.post(f"/tasks/{task['id']}/start")
         result = await completed(rig, task["id"])
@@ -847,3 +847,42 @@ async def test_unexpected_sco_loss_before_hangup_remains_failure(rig):
     result = await completed(rig, task_id)
     assert result["outcome"] == "audio_failed"
     assert result["model_result"]["status"] == "completed"
+
+
+@pytest.mark.parametrize("criteria", [None, "", "   "])
+async def test_api_defaults_goal_completion_and_transcription_without_dialing(rig, criteria):
+    body = {"device": DEVICE, "number": "123", "goal": "Confirm the appointment"}
+    if criteria is not None:
+        body["completion_criteria"] = criteria
+    response = await rig.client.post("/tasks", json=body)
+    assert response.status_code == 201
+    task = response.json()
+    assert task["input"]["completion_criteria"] == body["goal"]
+    assert task["state"] == "saved" and not task["input"]["start_immediately"]
+    assert task["input"]["background"] == DEFAULT_BACKGROUND
+    assert task["config"]["options"] == (
+        {"transcription": {"model": "gpt-4o-mini-transcribe"}}
+        if rig.provider == "openai"
+        else {"inputAudioTranscription": {}, "outputAudioTranscription": {}}
+    )
+    saved = (await rig.client.get("/tasks/" + task["id"])).json()
+    assert saved["input"]["completion_criteria"] == body["goal"]
+    assert saved["config"] == task["config"]
+    assert not any(command.startswith("ATD") for command in rig.phone.commands)
+
+
+async def test_explicit_completion_and_provider_options_remain_overrides(rig):
+    options = {"transcription": None} if rig.provider == "openai" else {"temperature": 0.2}
+    response = await rig.client.post(
+        "/tasks",
+        json=payload(
+            completion_criteria="The recipient explicitly confirms the time",
+            config={"options": options},
+        ),
+    )
+    assert response.status_code == 201
+    task = response.json()
+    assert task["input"]["completion_criteria"] == "The recipient explicitly confirms the time"
+    for name, value in options.items():
+        assert task["config"]["options"][name] == value
+    assert not any(command.startswith("ATD") for command in rig.phone.commands)

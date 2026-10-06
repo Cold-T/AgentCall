@@ -33,14 +33,13 @@ async def gemini_server():
 
 async def test_setup_audio_tools_context_and_automatic_continuation(gemini_server):
     endpoint, messages, sockets = gemini_server
-    config = ProviderConfig(
-        provider="gemini", options={"inputAudioTranscription": {}, "outputAudioTranscription": {}}
-    )
+    config = ProviderConfig(provider="gemini")
     provider = GeminiLive(config, "test-key", endpoint=endpoint)
     try:
         await provider.open("task in Chinese", TOOLS)
         setup = messages[0]["setup"]
         assert setup["model"] == "models/gemini-3.8-live"
+        assert setup["inputAudioTranscription"] == {} and setup["outputAudioTranscription"] == {}
         assert setup["generationConfig"]["responseModalities"] == ["AUDIO"]
         assert (
             setup["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"][

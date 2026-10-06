@@ -19,7 +19,7 @@ phone watch
 
 任务 JSON 的 `config.provider` 取 `openai` 或 `gemini`。切换 provider 时，自动选择该家的默认模型 / 声音，并重置另一家的 options；语言要求仍可继承。显式 model / voice / options 再覆盖这些默认值。同一家 provider 的 options 按字段合并默认值。任务保存有效配置，修改服务默认值只影响之后创建的任务，运行中不切换，也不在失败时重试另一家 provider。
 
-Gemini `options` 支持 `temperature`、`topP`、`topK`、`maxOutputTokens`、`thinkingConfig`、`inputAudioTranscription`、`outputAudioTranscription`、`realtimeInputConfig` 和 `contextWindowCompression`。使用原始 API camelCase 配置，例如：
+Gemini `options` 支持 `temperature`、`topP`、`topK`、`maxOutputTokens`、`thinkingConfig`、`inputAudioTranscription`、`outputAudioTranscription`、`realtimeInputConfig` 和 `contextWindowCompression`。输入和输出转写现在默认启用，无需重复填写；需要其他选项时使用原始 API camelCase 配置，例如：
 
 ```json
 {"provider":"gemini","options":{"inputAudioTranscription":{},"outputAudioTranscription":{}}}

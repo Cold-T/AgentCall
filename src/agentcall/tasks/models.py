@@ -55,6 +55,8 @@ class ProviderConfig(BaseModel):
                 raise ValueError(
                     "activity detection and interruption must be handled by the provider"
                 )
+            self.options.setdefault("inputAudioTranscription", {})
+            self.options.setdefault("outputAudioTranscription", {})
             json.dumps(self.options, allow_nan=False)
             return self
         allowed = {
@@ -77,6 +79,7 @@ class ProviderConfig(BaseModel):
             or detection.get("interrupt_response", True) is not True
         ):
             raise ValueError("turn detection and interruption must be handled by the provider")
+        self.options.setdefault("transcription", {"model": "gpt-4o-mini-transcribe"})
         json.dumps(self.options, allow_nan=False)
         return self
 
@@ -106,6 +109,8 @@ class TaskInput(BaseModel):
 
     @model_validator(mode="after")
     def validate_target(self):
+        if not self.completion_criteria.strip():
+            self.completion_criteria = self.goal
         if bool(self.number) == bool(self.contact_id):
             raise ValueError("provide exactly one of number or contact_id")
         try:
