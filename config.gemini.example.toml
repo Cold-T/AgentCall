@@ -15,9 +15,11 @@ audio_timeout_seconds = 10
 hangup_timeout_seconds = 5
 
 [provider]
-provider = "openai"
-model = "gpt-realtime-2.1"
-voice = "marin"
+provider = "gemini"
+model = "gemini-3.8-live"
+voice = "Aoede"
 language = "中文"
-# Optional: options.transcription = { model = "gpt-4o-mini-transcribe" }
+# Optional transcription, delivered as incremental events:
+# options.inputAudioTranscription = {}
+# options.outputAudioTranscription = {}
 # Input turn detection and interruption are handled by the API.

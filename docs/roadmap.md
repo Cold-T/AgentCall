@@ -2,7 +2,7 @@
 
 CP2 已完成：无界面蓝牙服务的软件实现与自动验证通过。Android / iPhone 的完整真机验收统一安排在 CP6，不作为 CP2–CP5 的完成条件；手机兼容性在实际验收前保持未验证。
 
-后续 CP3 / CP4 可使用模拟手机验证 provider 闭环。真机验收范围仍包含通话控制、音频、PBAP、AI 任务和异常场景；真机发现的问题在 CP6 修复并回归。详见 [软件验证记录](verification.md) 和 [CP6 真机验收清单](acceptance.md)。
+CP3 / CP4 已使用模拟手机完成 provider 软件与协议验证；两家真实 API 验证保留待执行。真机验收范围仍包含通话控制、音频、PBAP、AI 任务和异常场景；真机发现的问题在 CP6 修复并回归。详见 [软件验证记录](verification.md) 和 [CP6 真机验收清单](acceptance.md)。
 
 ## CP1 仓库初始化（已完成）
 
@@ -30,12 +30,14 @@ CP2 已完成：无界面蓝牙服务的软件实现与自动验证通过。Andr
 
 真实 OpenAI API 验证保留待执行（用户确认）；见 [CP3 验证记录](cp3-verification.md)。
 
-## CP4 Gemini Live 接入
+## CP4 Gemini Live 接入（软件与协议验证已完成）
 
-- [ ] Gemini Live 统一接口。
-- [ ] 同一任务可选择 OpenAI 或 Gemini。
-- [ ] 配置覆盖在新通话生效；失败不自动切换 provider。
-- [ ] 使用模拟手机验证两家 provider 的音频、转写及工具事件；真机闭环在 CP6 验收。
+- [x] Gemini Live 统一接口。
+- [x] 同一任务可选择 OpenAI 或 Gemini。
+- [x] 配置覆盖在新通话生效；失败不自动切换 provider。
+- [x] 使用模拟手机验证两家 provider 的音频、转写及工具事件；真机闭环在 CP6 验收。
+
+真实 API 未访问；见 [CP4 验证记录](cp4-verification.md)。
 
 ## CP5 完整 CLI / API
 

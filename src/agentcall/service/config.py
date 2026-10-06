@@ -16,6 +16,7 @@ class Config:
     token_env: str = "AGENTCALL_TOKEN"
     reconnect_seconds: float = 5
     api_key_env: str = "OPENAI_API_KEY"
+    gemini_api_key_env: str = "GEMINI_API_KEY"
     model_connect_seconds: float = 20
     answer_timeout_seconds: float = 60
     audio_timeout_seconds: float = 10

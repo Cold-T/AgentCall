@@ -7,14 +7,50 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 class ProviderConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    provider: Literal["openai"] = "openai"
-    model: str = Field(default="gpt-realtime-2.1", min_length=1, max_length=128)
-    voice: str = Field(default="marin", min_length=1, max_length=64)
+    provider: Literal["openai", "gemini"] = "openai"
+    model: str | None = Field(default=None, min_length=1, max_length=128)
+    voice: str | None = Field(default=None, min_length=1, max_length=64)
     language: str = Field(default="中文", min_length=1, max_length=128)
     options: dict = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_options(self):
+        self.model = self.model or (
+            "gpt-realtime-2.1" if self.provider == "openai" else "gemini-3.8-live"
+        )
+        self.voice = self.voice or ("marin" if self.provider == "openai" else "Aoede")
+        if self.provider == "gemini":
+            allowed = {
+                "temperature",
+                "topP",
+                "topK",
+                "maxOutputTokens",
+                "thinkingConfig",
+                "inputAudioTranscription",
+                "outputAudioTranscription",
+                "realtimeInputConfig",
+                "contextWindowCompression",
+            }
+            if set(self.options) - allowed:
+                raise ValueError(
+                    "unsupported Gemini option; credentials and endpoint are server-only"
+                )
+            realtime = self.options.get("realtimeInputConfig", {})
+            if (
+                not isinstance(realtime, dict)
+                or set(realtime)
+                - {"automaticActivityDetection", "activityHandling", "turnCoverage"}
+                or not isinstance(realtime.get("automaticActivityDetection", {}), dict)
+                or realtime.get("automaticActivityDetection", {}).get("disabled", False)
+                is not False
+                or realtime.get("activityHandling", "START_OF_ACTIVITY_INTERRUPTS")
+                != "START_OF_ACTIVITY_INTERRUPTS"
+            ):
+                raise ValueError(
+                    "activity detection and interruption must be handled by the provider"
+                )
+            json.dumps(self.options, allow_nan=False)
+            return self
         allowed = {
             "turn_detection",
             "noise_reduction",
@@ -41,7 +77,7 @@ class ProviderConfig(BaseModel):
 
 class ProviderOverride(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    provider: Literal["openai"] | None = None
+    provider: Literal["openai", "gemini"] | None = None
     model: str | None = Field(default=None, min_length=1, max_length=128)
     voice: str | None = Field(default=None, min_length=1, max_length=64)
     language: str | None = Field(default=None, min_length=1, max_length=128)
