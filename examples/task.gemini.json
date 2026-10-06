@@ -1,0 +1,34 @@
+{
+  "device": "AA:BB:CC:DD:EE:FF",
+  "number": "+1234567890",
+  "goal": "询问店铺明天的营业时间",
+  "background": "电话接通后礼貌说明只是咨询营业时间。",
+  "information": {},
+  "completion_criteria": "获得明天的开门和关门时间；无法确认时报告未完成。",
+  "result_schema": {
+    "type": "object",
+    "properties": {
+      "opening_time": {
+        "type": "string"
+      },
+      "closing_time": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "opening_time",
+      "closing_time"
+    ],
+    "additionalProperties": false
+  },
+  "config": {
+    "provider": "gemini",
+    "language": "中文",
+    "options": {
+      "inputAudioTranscription": {},
+      "outputAudioTranscription": {}
+    }
+  },
+  "max_call_seconds": 300,
+  "start_immediately": false
+}

@@ -9,6 +9,7 @@ from jsonschema import Draft202012Validator, ValidationError
 from agentcall.audio.bridge import AudioBridge
 from agentcall.bluetooth.hfp import HFPError
 from agentcall.providers.base import ProviderError
+from agentcall.providers.gemini import GeminiLive
 from agentcall.providers.openai import OpenAIRealtime
 from agentcall.storage.store import now
 from agentcall.tasks.models import TOOLS, ProviderConfig, TaskInput, instructions
@@ -35,10 +36,16 @@ class TaskManager:
         self.backend.listeners.add(self.on_event)
 
     def make_provider(self, config):
-        key = os.environ.get(self.config.api_key_env, "")
+        env = (
+            self.config.api_key_env
+            if config.provider == "openai"
+            else self.config.gemini_api_key_env
+        )
+        key = os.environ.get(env, "")
         if not key:
-            raise ProviderError("OpenAI API key environment variable is not configured")
-        return OpenAIRealtime(config, key, timeout=self.config.model_connect_seconds)
+            raise ProviderError(f"{config.provider} API key environment variable is not configured")
+        provider = OpenAIRealtime if config.provider == "openai" else GeminiLive
+        return provider(config, key, timeout=self.config.model_connect_seconds)
 
     def on_event(self, event):
         self.wake.set()
@@ -60,6 +67,9 @@ class TaskManager:
         at.cmd_dial(data["number"])
         base = self.config.provider.model_dump()
         override = body.config.model_dump(exclude_none=True)
+        if override.get("provider", base["provider"]) != base["provider"]:
+            defaults = ProviderConfig(provider=override["provider"]).model_dump()
+            base = {**defaults, "language": base["language"]}
         options = {**base["options"], **override.pop("options", {})}
         resolved = ProviderConfig(**{**base, **override, "options": options}).model_dump()
         task_id = self.store.create_task(path, data, resolved)
@@ -168,6 +178,7 @@ class TaskRun:
         self.responses = set()
         self.continue_response = False
         self.hangup_job = None
+        self.hangup_call_id = None
         self.opened = False
 
     def spawn(self, coro, outcome):
@@ -337,6 +348,11 @@ class TaskRun:
                 await self.bridge.enqueue(event["pcm"])
             elif kind == "tool":
                 await self.tool(event)
+            elif kind == "tool_cancelled":
+                self.manager.event(self.id, "model.tool_cancelled", **event)
+                if self.hangup_job and self.hangup_call_id in event["call_ids"]:
+                    self.hangup_job.cancel()
+                    self.hangup_job = None
             elif kind == "response_started":
                 self.responses.add(event["response_id"])
                 self.response_events.setdefault(event["response_id"], asyncio.Event())
@@ -348,14 +364,14 @@ class TaskRun:
                 self.response_events.setdefault(response_id, asyncio.Event()).set()
                 self.manager.event(self.id, "model.response", **event)
                 if event.get("status") == "failed":
-                    raise ProviderError("OpenAI response failed")
+                    raise ProviderError("model response failed")
                 if self.continue_response and not self.responses and not self.hangup_job:
                     self.continue_response = False
                     await self.provider.start_response()
             elif kind == "error":
                 self.manager.event(self.id, "model.error", **event)
                 if event.get("code") != "conversation_already_has_active_response":
-                    raise ProviderError("OpenAI returned an error event")
+                    raise ProviderError("model returned an error event")
             else:
                 self.manager.event(self.id, "model." + kind, **event)
         if not self.done.is_set():
@@ -388,6 +404,7 @@ class TaskRun:
                 if not event.get("response_id"):
                     raise ValueError("hangup requires a provider response ID")
                 if self.hangup_job is None:
+                    self.hangup_call_id = call_id
                     self.hangup_job = self.spawn(
                         self.normal_hangup(event.get("response_id")), "hangup_failed"
                     )

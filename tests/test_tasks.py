@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import httpx
 import numpy as np
+import pytest
 import pytest_asyncio
 import websockets
 from conftest import DEVICE, Phone
@@ -13,11 +14,13 @@ from conftest import DEVICE, Phone
 from agentcall.api.app import create_app
 from agentcall.audio.transport import SCOAudio
 from agentcall.bluetooth.hfp import HFPConnection
+from agentcall.providers.gemini import GeminiLive
 from agentcall.providers.openai import OpenAIRealtime
 from agentcall.service.backend import Backend
 from agentcall.service.config import Config
 from agentcall.storage.store import Store
 from agentcall.tasks.manager import TaskManager
+from agentcall.tasks.models import ProviderConfig
 
 
 async def wait_for(predicate, seconds=4):
@@ -55,6 +58,13 @@ class Rig:
         self.session_configs = []
         self.hangup_output_sizes = []
         self.response_count = 0
+
+    def tool_outputs(self):
+        return [
+            {"call_id": e["item"]["call_id"], "result": json.loads(e["item"]["output"])}
+            for e in self.model_messages
+            if e.get("item", {}).get("type") == "function_call_output"
+        ]
 
     async def websocket(self, ws):
         self.model_sockets.append(ws)
@@ -185,14 +195,117 @@ class Rig:
             await asyncio.sleep(0.002)
 
 
-@pytest_asyncio.fixture
-async def rig(monkeypatch):
-    rig = Rig()
+class GeminiRig(Rig):
+    def tool_outputs(self):
+        return [
+            {"call_id": item["id"], "result": item["response"]}
+            for e in self.model_messages
+            for item in e.get("toolResponse", {}).get("functionResponses", [])
+        ]
+
+    async def websocket(self, ws):
+        self.model_sockets.append(ws)
+        tool_results = {}
+        started = False
+        try:
+            async for raw in ws:
+                event = json.loads(raw)
+                self.model_messages.append(event)
+                if "setup" in event:
+                    self.session_configs.append(event["setup"])
+                    await ws.send(json.dumps({"setupComplete": {}}))
+                elif (
+                    "Begin the task" in event.get("realtimeInput", {}).get("text", "")
+                    and not started
+                ):
+                    started = True
+                    self.response_count += 1
+                    self.jobs.append(asyncio.create_task(self.respond_gemini(ws, tool_results)))
+                elif "toolResponse" in event:
+                    for result in event["toolResponse"]["functionResponses"]:
+                        tool_results.setdefault(result["id"], asyncio.Event()).set()
+        except websockets.exceptions.ConnectionClosed:
+            pass
+
+    async def respond_gemini(self, ws, results):
+        async def send(event):
+            await ws.send(json.dumps(event))
+
+        async def tool(call_id, name, args, duplicate=False):
+            call = {"id": call_id, "name": name, "args": args}
+            await send({"toolCall": {"functionCalls": [call]}})
+            if duplicate:
+                await send({"toolCall": {"functionCalls": [call]}})
+            await asyncio.wait_for(results.setdefault(call_id, asyncio.Event()).wait(), 1)
+
+        samples = (np.sin(np.arange(4800) * 2 * np.pi * 440 / 24000) * 9000).astype("<i2").tobytes()
+        offset = 0
+        for length in [100, 338, 2000, 416, 6746]:
+            await send(
+                {
+                    "serverContent": {
+                        "modelTurn": {
+                            "parts": [
+                                {
+                                    "inlineData": {
+                                        "mimeType": "audio/pcm;rate=24000",
+                                        "data": base64.b64encode(
+                                            samples[offset : offset + length]
+                                        ).decode(),
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            )
+            offset += length
+        if self.mode == "disconnect":
+            await ws.close()
+            return
+        await send(
+            {
+                "serverContent": {
+                    "inputTranscription": {"text": "Question"},
+                    "outputTranscription": {"text": "The answer is 42."},
+                }
+            }
+        )
+        await tool("digits1", "send_dtmf", {"digits": "12*#"}, duplicate=True)
+        if self.mode == "bad_tools":
+            await tool("bad1", "send_dtmf", {"digits": "1\rATD999;"})
+            await tool(
+                "bad2", "finish_task", {"status": "completed", "result": {"answer": "wrong type"}}
+            )
+            await tool("bad3", "arbitrary_command", {})
+        else:
+            await tool(
+                "finish1",
+                "finish_task",
+                {
+                    "status": "partial" if self.mode == "partial" else "completed",
+                    "result": {"answer": 42},
+                },
+            )
+        if self.mode not in ("hold", "bad_tools"):
+            await tool("hangup1", "hangup", {"reason": "Task finished"})
+        if self.mode == "cancel_hangup":
+            await send({"toolCallCancellation": {"ids": ["hangup1"]}})
+        await send({"serverContent": {"generationComplete": True}})
+        await asyncio.sleep(0.01)
+        await send({"serverContent": {"turnComplete": True, "interactionStatus": "IDLE"}})
+
+
+@pytest_asyncio.fixture(params=["openai", "gemini"])
+async def rig(monkeypatch, request):
+    rig = Rig() if request.param == "openai" else GeminiRig()
+    rig.provider = request.param
     config = Config(
         answer_timeout_seconds=0.15,
         audio_timeout_seconds=0.15,
         hangup_timeout_seconds=0.3,
         model_connect_seconds=0.3,
+        provider=ProviderConfig(provider=request.param),
     )
     store = Store(":memory:")
     backend = Backend(config, store)
@@ -215,7 +328,8 @@ async def rig(monkeypatch):
         endpoint = f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/realtime"
 
         def factory(c):
-            return OpenAIRealtime(c, "test-key", endpoint=endpoint, timeout=0.3)
+            provider = OpenAIRealtime if c.provider == "openai" else GeminiLive
+            return provider(c, "test-key", endpoint=endpoint, timeout=0.3)
 
         manager = TaskManager(backend, config, factory)
         rig.manager = manager
@@ -266,12 +380,14 @@ async def test_complete_http_task_model_audio_tools_hangup_and_records(rig):
     for digit in "12*#":
         assert rig.phone.commands.count("AT+VTS=" + digit) == 1
     assert rig.hangup_output_sizes == [3200]  # all 200ms closing audio reaches SCO before CHUP
-    audio_inputs = [e for e in rig.model_messages if e["type"] == "input_audio_buffer.append"]
-    assert len(audio_inputs) > 1  # phone input continues while output plays
-    tool_outputs = [
-        e for e in rig.model_messages if e.get("item", {}).get("type") == "function_call_output"
+    audio_inputs = [
+        e
+        for e in rig.model_messages
+        if e.get("type") == "input_audio_buffer.append" or "audio" in e.get("realtimeInput", {})
     ]
-    assert [e["item"]["call_id"] for e in tool_outputs].count("digits1") == 1
+    assert len(audio_inputs) > 1  # phone input continues while output plays
+    tool_outputs = rig.tool_outputs()
+    assert [e["call_id"] for e in tool_outputs].count("digits1") == 1
     events = (await rig.client.get(f"/tasks/{task_id}/events")).json()
     states = [e["data"]["state"] for e in events if e["kind"] == "task.state"]
     assert states == ["preparing", "dialing", "in_call", "finalizing", "ended"]
@@ -299,12 +415,23 @@ async def test_same_device_queued_tasks_and_idempotent_retries(rig):
 
 async def test_partial_result_and_per_task_config_override(rig):
     rig.mode = "partial"
-    task_id = await create_start(rig, payload(config={"voice": "cedar", "language": "English"}))
+    voice = "cedar" if rig.provider == "openai" else "Puck"
+    task_id = await create_start(rig, payload(config={"voice": voice, "language": "English"}))
     result = await completed(rig, task_id)
     assert result["outcome"] == "partial", result
-    assert rig.session_configs[0]["audio"]["output"]["voice"] == "cedar"
-    assert "Speak in English" in rig.session_configs[0]["instructions"]
-    assert rig.manager.config.provider.voice == "marin"
+    session = rig.session_configs[0]
+    if rig.provider == "openai":
+        assert session["audio"]["output"]["voice"] == voice
+        assert "Speak in English" in session["instructions"]
+    else:
+        assert (
+            session["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"][
+                "voiceName"
+            ]
+            == voice
+        )
+        assert "Speak in English" in session["systemInstruction"]["parts"][0]["text"]
+    assert rig.manager.config.provider.voice == ("marin" if rig.provider == "openai" else "Aoede")
 
 
 async def test_bad_tool_arguments_and_result_schema_do_not_execute(rig):
@@ -312,11 +439,7 @@ async def test_bad_tool_arguments_and_result_schema_do_not_execute(rig):
     task_id = await create_start(rig, payload(max_call_seconds=0.35))
     result = await completed(rig, task_id)
     assert result["outcome"] == "timeout" and result["model_result"] is None
-    outputs = [
-        json.loads(e["item"]["output"])
-        for e in rig.model_messages
-        if e.get("item", {}).get("type") == "function_call_output"
-    ]
+    outputs = [e["result"] for e in rig.tool_outputs()]
     assert sum(not e["ok"] for e in outputs) == 3
     assert "ATD999;" not in rig.phone.commands
 
@@ -339,6 +462,8 @@ async def test_model_disconnect_hangs_up_and_records_failure(rig):
     assert result["outcome"] == "model_disconnected", result
     assert "AT+CHUP" in rig.phone.commands
     assert result["call"]["end_reason"] == "phone_ended"
+    assert len(rig.session_configs) == 1  # no reconnect or automatic provider fallback
+    assert result["config"]["provider"] == rig.provider
 
 
 async def test_no_answer_and_busy_are_separate_outcomes(rig):
@@ -438,7 +563,11 @@ async def test_audio_readiness_deadline_and_live_context(rig, monkeypatch):
         await rig.client.post(f"/tasks/{second}/context", json={"text": "extra fact"})
     ).status_code == 200
     await wait_for(
-        lambda: any(e.get("item", {}).get("role") == "system" for e in rig.model_messages)
+        lambda: any(
+            e.get("item", {}).get("role") == "system"
+            or "extra fact" in e.get("realtimeInput", {}).get("text", "")
+            for e in rig.model_messages
+        )
     )
     await rig.client.post(f"/tasks/{second}/cancel")
     await completed(rig, second)
@@ -467,3 +596,62 @@ def test_restart_never_requeues_interrupted_calls_and_preserves_dedup(tmp_path):
     assert not reopened.claim_tool(ids[4], "tool-id", "send_dtmf", '{"digits":"1"}')
     assert reopened.start_task(ids[1], "retry-key")["state"] == "queued"
     reopened.close()
+
+
+async def test_switch_provider_resolves_own_defaults_and_factory_credentials(rig, monkeypatch):
+    import agentcall.tasks.manager as module
+
+    selected = "gemini" if rig.provider == "openai" else "openai"
+    other = GeminiRig() if selected == "gemini" else Rig()
+    rig.manager.config.provider.options = (
+        {"transcription": {"model": "gpt-4o-mini-transcribe"}}
+        if rig.provider == "openai"
+        else {"inputAudioTranscription": {}}
+    )
+    monkeypatch.setenv(rig.manager.config.api_key_env, "openai-only-key")
+    monkeypatch.setenv(rig.manager.config.gemini_api_key_env, "gemini-only-key")
+    seen = []
+    async with websockets.serve(other.websocket, "127.0.0.1", 0) as server:
+        endpoint = f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}"
+
+        def build(config, key, timeout):
+            seen.append((config.provider, key))
+            provider = GeminiLive if config.provider == "gemini" else OpenAIRealtime
+            return provider(config, "test-key", endpoint=endpoint, timeout=timeout)
+
+        monkeypatch.setattr(module, "GeminiLive", build)
+        monkeypatch.setattr(module, "OpenAIRealtime", build)
+        rig.manager.factory = rig.manager.make_provider
+        response = await rig.client.post("/tasks", json=payload(config={"provider": selected}))
+        assert response.status_code == 201
+        task = response.json()
+        defaults = ProviderConfig(provider=selected)
+        assert task["config"]["model"] == defaults.model
+        assert task["config"]["voice"] == defaults.voice
+        assert task["config"]["options"] == {}  # old provider options never leak across
+        rig.manager.config.provider = ProviderConfig(provider=rig.provider, voice="changed")
+        await rig.client.post(f"/tasks/{task['id']}/start")
+        result = await completed(rig, task["id"])
+        assert result["outcome"] == "completed", result
+        assert result["config"]["voice"] == defaults.voice  # saved config is immutable
+        assert seen == [
+            (selected, "gemini-only-key" if selected == "gemini" else "openai-only-key")
+        ]
+        assert "only-key" not in json.dumps(result)
+        await asyncio.gather(*other.jobs, return_exceptions=True)
+
+
+@pytest.mark.parametrize("rig", ["gemini"], indirect=True)
+async def test_api_cancelled_hangup_does_not_hang_up_or_clear_received_audio(rig):
+    rig.mode = "cancel_hangup"
+    task_id = await create_start(rig)
+    await wait_for(
+        lambda: any(e["kind"] == "model.tool_cancelled" for e in rig.store.task_events(task_id))
+    )
+    await asyncio.sleep(0.3)
+    assert rig.store.task(task_id)["state"] == "in_call"
+    assert len(rig.output) == 3200  # interruption does not clear audio buffers
+    assert "AT+CHUP" not in rig.phone.commands
+    assert rig.store.task(task_id)["model_result"]["status"] == "completed"
+    await rig.client.post(f"/tasks/{task_id}/cancel")
+    assert (await completed(rig, task_id))["outcome"] == "user_cancelled"

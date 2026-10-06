@@ -47,3 +47,5 @@ SSE 提供实时增量事件，没有断点重放。慢客户端超过有界事�
 | 补充上下文 | `POST /tasks/{id}/context` | `{"text":"补充资料"}`，仅活动对话允许 |
 
 状态为 saved → queued → preparing → dialing → in_call → finalizing → ended。`outcome` 是执行结束原因，`model_result.status` 是模型报告结果，`call.state` 是手机实际状态；三者分别保存。任务 / 工具事件也通过现有 SSE 发布。密钥仅由服务环境读取，任务不接受凭据或自定义模型端点。任务结果 schema 仅允许本地片段引用。详见 [任务说明](tasks.md)。
+
+`config.provider` 支持 `openai` / `gemini`，两家共用上述任务接口。模型、声音、专属 options 与凭据选择规则见 [Gemini 文档](gemini.md)。转写事件中 Gemini 的 `delta=true` 表示文本分片；按事件顺序展示即可，不用于替代音频输入。
