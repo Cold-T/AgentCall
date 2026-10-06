@@ -23,6 +23,8 @@
 | 实时事件 | `GET /events` | SSE，kind、device、时间、项目 call_id 等 |
 | 音频 | `WS /calls/{id}/audio` | 首条 JSON 为格式和指标，随后二进制 s16le mono PCM 双向流 |
 
+`GET /devices` 只读取 BlueZ 已知设备，不会启动搜索。搜索新手机时先调用 `POST /discovery/start`，每 2 秒读取设备列表，最多等待 30 秒（设备出现后可提前结束），最后调用 `POST /discovery/stop`。网页和 API 共用扫描状态；停止会同时停止网页扫描。手机需打开蓝牙并保持可发现状态。扫描未发现设备时不要把历史列表当作扫描结果。
+
 device 支持 MAC 或 `dev_AA_BB_CC_DD_EE_FF`；API 路径用其中一种，不嵌套完整 D-Bus path。SSE 和记录里的 device 使用完整 D-Bus path。
 
 号码严格允许可选前缀 `+`、数字、`*`、`#`，最多 64 个号码字符。联系人号码仅移除空格、括号、点和连字符，再做同样校验。DTMF 允许 1–64 个数字、`*`、`#`。

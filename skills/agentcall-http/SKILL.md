@@ -1,6 +1,6 @@
 ---
 name: agentcall-http
-description: Create, start, monitor, and retrieve AgentCall AI phone-call tasks through its authenticated HTTP API. Use when asked to make an AI-assisted phone call with AgentCall or manage an existing AgentCall task over HTTP.
+description: Create, start, monitor, and retrieve AgentCall AI phone-call tasks through its authenticated HTTP API. Use when asked to discover or connect a Bluetooth phone through AgentCall, make an AI-assisted phone call, or manage an existing AgentCall task over HTTP.
 ---
 
 # AgentCall HTTP task skill
@@ -31,9 +31,39 @@ The configured 4-digit PIN is the API token itself; no login or token-exchange s
 
 Common failures: `401` means authentication failed; `429` means authentication rate limiting and includes `Retry-After`; `422` means request schema/field validation failed; `409` indicates a phone/task/AT-command state conflict; `503` indicates Bluetooth or PBAP availability; `504` indicates a timeout. Do not repeat a mutating request blindly after a timeout.
 
+## Discover and connect a phone
+
+`GET /devices` lists devices already known to BlueZ; it does **not** start Bluetooth discovery. `GET /devices/saved` is persisted history, not a live scan. Do not report that a new phone cannot be found after only listing devices.
+
+When the user asks to search for a new device, or the requested phone is missing:
+
+1. Check `GET /health`. Have the phone's Bluetooth enabled and its Bluetooth settings/pairing screen open so it is discoverable.
+2. Call `POST /discovery/start` using the same authenticated API base URL. This is the same operation as the web “搜索设备” button. `accepted: true` means scanning started, not that discovery is complete.
+3. Poll `GET /devices` every 2 seconds for up to 30 seconds, stopping early when the requested device appears. Use its returned `id` or `address`; do not guess the identifier. If no particular target was specified, report the discovered names/addresses for selection; do not automatically pair every result. Discovery is asynchronous, so an immediate empty list is not a final scan result.
+4. Call `POST /discovery/stop` when this search finishes, including on timeout or error after successfully starting it. Scanning is shared with the webpage; stopping it also stops the webpage's scan. Do not repeatedly start discovery while polling. If start fails, report the API error instead of treating a cached device list as a successful search.
+5. If the user requested connection, pair an unpaired phone with `POST /devices/{device}/pair`. Retrieve `GET /pairing` for pending confirmations, and accept through `POST /pairing/{request_id}` with `{"accept":true}` only after the user has checked the phone's matching value. Then call `POST /devices/{device}/connect` and poll device status to confirm `hfp_ready: true`. `paired` or `connected` alone does not prove call readiness. Connecting a phone does not authorize placing a call.
+
+If a scan times out, report that the phone was not discovered within the scan window and suggest keeping the phone's Bluetooth pairing screen open before another requested scan. Never require the user to start discovery from the webpage first.
+
+Example scan start and list (wait and poll as described above, then stop):
+
+```sh
+curl --fail-with-body --silent --show-error -X POST \
+  -H "Authorization: Bearer ${AGENTCALL_TOKEN}" \
+  "${AGENTCALL_URL}/discovery/start"
+
+curl --fail-with-body --silent --show-error \
+  -H "Authorization: Bearer ${AGENTCALL_TOKEN}" \
+  "${AGENTCALL_URL}/devices"
+
+curl --fail-with-body --silent --show-error -X POST \
+  -H "Authorization: Bearer ${AGENTCALL_TOKEN}" \
+  "${AGENTCALL_URL}/discovery/stop"
+```
+
 ## Make a task call
 
-1. Check readiness (`GET /health`) and list devices (`GET /devices`). Use a device identifier returned by the service. A device can be a Bluetooth MAC such as `AA:BB:CC:DD:EE:FF` or the supported `dev_AA_BB_CC_DD_EE_FF` form.
+1. Check readiness (`GET /health`) and list devices (`GET /devices`). If the requested phone is missing, use the discovery flow above; listing alone does not scan. Verify the selected phone reports `hfp_ready: true` before starting a call. Use a device identifier returned by the service. A device can be a Bluetooth MAC such as `AA:BB:CC:DD:EE:FF` or the supported `dev_AA_BB_CC_DD_EE_FF` form.
 2. If needed, find a contact with `GET /contacts?q=...` and use its `contact_id`. Do not assume a contact is current unless the service reports it.
 3. Build a task using exactly one of `number` or `contact_id`. The task fields are:
    - `device` (required): target paired phone.
@@ -96,7 +126,7 @@ curl --fail-with-body --silent --show-error \
 
 Task states progress through `saved → queued → preparing → dialing → in_call → finalizing → ended`. Start is idempotent: retry the same task with the same key after an uncertain response. A task that has ended cannot be restarted; a new task is a new call and requires authorization. The phone queue serializes tasks per device, and conflicts may return `409`.
 
-The permanent service instructions make the AI introduce itself as a delegated assistant, talk directly to the recipient, ask one main question at a time, avoid reading internal task/context text, avoid invented facts or unauthorized commitments, use `send_dtmf` for phone menus, and submit a truthful structured result with `finish_task`. After completing the task it must confirm key facts, thank the recipient, finish speaking its closing, then call `hangup`. Do not copy these instructions into each task request; supply the call goal and relevant facts only.
+The default call instructions make the AI introduce itself as a delegated assistant, talk directly to the recipient, ask one main question at a time, avoid reading internal task/context text, avoid invented facts or unauthorized commitments, use `send_dtmf` for phone menus, and submit a truthful structured result with `finish_task`. After completing the task it must confirm key facts, thank the recipient, finish speaking its closing, then call `hangup`. Do not copy these instructions into each task request; supply the call goal and relevant facts only.
 
 The API still defaults to saving a task without dialing; the web call button explicitly starts it. Automatic recording and the one-second opening pause apply to API and web AI calls alike. Provider options, voices and speech speed are resolved when creating a task; already saved tasks retain their configuration.
 
