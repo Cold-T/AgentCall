@@ -117,3 +117,119 @@ class Store:
 
     def close(self):
         self.db.close()
+
+    def init_tasks(self):
+        self.db.executescript("""
+            CREATE TABLE IF NOT EXISTS tasks(
+                id TEXT PRIMARY KEY, device TEXT NOT NULL, input TEXT NOT NULL, config TEXT NOT NULL,
+                state TEXT NOT NULL DEFAULT 'saved', outcome TEXT, call_id TEXT, model_result TEXT,
+                error TEXT, created_at TEXT NOT NULL, started_at TEXT, ended_at TEXT);
+            CREATE TABLE IF NOT EXISTS task_starts(key TEXT PRIMARY KEY, task_id TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS task_events(
+                id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL, time TEXT NOT NULL,
+                kind TEXT NOT NULL, data TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS tool_calls(
+                task_id TEXT NOT NULL, call_id TEXT NOT NULL, name TEXT, arguments TEXT,
+                result TEXT, state TEXT NOT NULL, PRIMARY KEY(task_id, call_id));
+        """)
+
+    def recover_tasks(self):
+        with self.db:
+            self.db.execute(
+                "UPDATE tasks SET state='ended', outcome='service_restart', ended_at=? "
+                "WHERE state IN ('preparing','dialing','in_call','finalizing')",
+                (now(),),
+            )
+
+    def create_task(self, device, data, config):
+        task_id = str(uuid4())
+        with self.db:
+            self.db.execute(
+                "INSERT INTO tasks(id,device,input,config,created_at) VALUES (?,?,?,?,?)",
+                (
+                    task_id,
+                    device,
+                    json.dumps(data, ensure_ascii=False),
+                    json.dumps(config, ensure_ascii=False),
+                    now(),
+                ),
+            )
+        return task_id
+
+    def task(self, task_id):
+        row = self.db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+        if row is None:
+            raise ValueError("unknown task ID")
+        task = dict(row)
+        for key in ("input", "config", "model_result", "error"):
+            task[key] = json.loads(task[key]) if task[key] else None
+        task["call"] = self.call(task["call_id"]) if task["call_id"] else None
+        return task
+
+    def task_ids(self, state=None):
+        return [
+            r[0]
+            for r in self.db.execute(
+                "SELECT id FROM tasks WHERE (? IS NULL OR state=?) ORDER BY created_at,rowid",
+                (state, state),
+            )
+        ]
+
+    def update_task(self, task_id, **fields):
+        allowed = {"state", "outcome", "call_id", "model_result", "error", "started_at", "ended_at"}
+        if fields.keys() - allowed:
+            raise ValueError("unsupported task field")
+        for key in ("model_result", "error"):
+            if key in fields:
+                fields[key] = json.dumps(fields[key], ensure_ascii=False)
+        with self.db:
+            self.db.execute(
+                "UPDATE tasks SET " + ",".join(f"{k}=?" for k in fields) + " WHERE id=?",
+                (*fields.values(), task_id),
+            )
+
+    def start_task(self, task_id, key=None):
+        self.task(task_id)
+        with self.db:
+            if key:
+                existing = self.db.execute(
+                    "SELECT task_id FROM task_starts WHERE key=?", (key,)
+                ).fetchone()
+                if existing and existing[0] != task_id:
+                    raise ValueError("idempotency key belongs to a different task")
+                self.db.execute("INSERT OR IGNORE INTO task_starts VALUES (?,?)", (key, task_id))
+            self.db.execute(
+                "UPDATE tasks SET state='queued' WHERE id=? AND state='saved'", (task_id,)
+            )
+        return self.task(task_id)
+
+    def task_event(self, task_id, kind, data):
+        with self.db:
+            self.db.execute(
+                "INSERT INTO task_events(task_id,time,kind,data) VALUES (?,?,?,?)",
+                (task_id, now(), kind, json.dumps(data, ensure_ascii=False)),
+            )
+
+    def task_events(self, task_id):
+        self.task(task_id)
+        return [
+            {**dict(r), "data": json.loads(r["data"])}
+            for r in self.db.execute(
+                "SELECT * FROM task_events WHERE task_id=? ORDER BY id", (task_id,)
+            )
+        ]
+
+    def claim_tool(self, task_id, call_id, name, arguments):
+        with self.db:
+            cursor = self.db.execute(
+                "INSERT OR IGNORE INTO tool_calls VALUES (?,?,?,?,NULL,'executing')",
+                (task_id, call_id, name, arguments),
+            )
+        return cursor.rowcount == 1
+
+    def finish_tool(self, task_id, call_id, result):
+        with self.db:
+            self.db.execute(
+                "UPDATE tool_calls SET result=?,state='done' WHERE task_id=? AND call_id=?",
+                (json.dumps(result, ensure_ascii=False), task_id, call_id),
+            )

@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
+from typing import Annotated
 
 import httpx
 import typer
@@ -25,10 +26,15 @@ def headers():
     return {"Authorization": f"Bearer {token}"} if token else {}
 
 
-def request(method, path, body=None, params=None):
+def request(method, path, body=None, params=None, extra_headers=None):
     try:
         response = httpx.request(
-            method, settings["url"] + path, json=body, params=params, headers=headers(), timeout=120
+            method,
+            settings["url"] + path,
+            json=body,
+            params=params,
+            headers={**headers(), **(extra_headers or {})},
+            timeout=120,
         )
         response.raise_for_status()
     except httpx.HTTPError as exc:
@@ -245,3 +251,48 @@ def audio(
     except (OSError, ValueError, RuntimeError, KeyboardInterrupt) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from None
+
+
+task_app = typer.Typer(help="Save, start, inspect and cancel AI phone tasks", no_args_is_help=True)
+app.add_typer(task_app, name="task")
+
+
+@task_app.command("create")
+def task_create(file: Annotated[Path, typer.Option(exists=True, dir_okay=False)]):
+    try:
+        body = json.loads(file.read_text())
+    except (OSError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    request("POST", "/tasks", body)
+
+
+@task_app.command("start")
+def task_start(task_id: str, key: str | None = typer.Option(None)):
+    request(
+        "POST", f"/tasks/{task_id}/start", extra_headers={"Idempotency-Key": key} if key else {}
+    )
+
+
+@task_app.command("show")
+def task_show(task_id: str):
+    request("GET", f"/tasks/{task_id}")
+
+
+@task_app.command("list")
+def task_list():
+    request("GET", "/tasks")
+
+
+@task_app.command("cancel")
+def task_cancel(task_id: str):
+    request("POST", f"/tasks/{task_id}/cancel")
+
+
+@task_app.command("events")
+def task_events(task_id: str):
+    request("GET", f"/tasks/{task_id}/events")
+
+
+@task_app.command("context")
+def task_context(task_id: str, text: str):
+    request("POST", f"/tasks/{task_id}/context", {"text": text})

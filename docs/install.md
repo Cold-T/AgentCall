@@ -1,4 +1,4 @@
-# 安装与运行（无界面蓝牙阶段）
+# 安装与运行
 
 要求 Linux、Python 3.11+、支持 HFP / SCO 的蓝牙适配器、BlueZ 和用户 session D-Bus。手机需要作为 HFP Audio Gateway；不依赖 ADB、手机 App 或屏幕自动化。
 
@@ -64,7 +64,7 @@ CLI 启动 pacat，将当前系统麦克风和扬声器接到服务的全双工�
 .venv/bin/phone audio CALL_ID --input outbound.pcm --output inbound.pcm --seconds 30
 ```
 
-此阶段只支持 SCO 原生 PCM 格式；与 RTS provider 的格式转换和重采样属于下一个 checkpoint。服务接受可变长度块，只按实际 MTU 或 mSBC 必要编码帧分帧，不增加固定时长 PCM 批次。不实现独立 VAD、插话策略或主动清空音频缓存。
+手动音频 WebSocket 使用 SCO 原生 PCM 格式；AI 任务由服务自动桥接至模型 24kHz 音频，配置与命令见 [OpenAI 任务说明](tasks.md)。服务接受可变长度块，只按实际 MTU 或 mSBC 必要编码帧分帧，不增加固定时长 PCM 批次。不实现独立 VAD、插话策略或主动清空音频缓存。
 
 ## HFP 冲突与适配器
 

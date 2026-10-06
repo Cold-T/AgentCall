@@ -24,6 +24,8 @@ class Backend:
         self.current = {}
         self.jobs = set()
         self.subscribers = set()
+        self.listeners = set()
+        self.claims = {}
         self.pairing = set()
         self.error = None
         self.running = False
@@ -107,6 +109,8 @@ class Backend:
                 queue.put_nowait({"kind": "events.overflow", "error": "reconnect and query state"})
             else:
                 queue.put_nowait(event)
+        for listener in tuple(self.listeners):
+            listener(event)
         log.info("%s %s", kind, data)
         return event
 
@@ -213,10 +217,12 @@ class Backend:
                     self.emit("device.reconnect_failed", device=device, error=str(exc))
                 # No ATD/redial call is present in this path.
 
-    async def dial(self, device, number=None, contact_id=None):
+    async def dial(self, device, number=None, contact_id=None, owner=None):
         path = self.path(device)
         lock = self.device_locks.setdefault(path, asyncio.Lock())
         async with lock:
+            if path in self.claims and self.claims[path] != owner:
+                raise HFPError("device is reserved by an AI task")
             if contact_id:
                 contacts = [c for c in self.store.contacts(device=path) if c["id"] == contact_id]
                 if not contacts:
@@ -228,6 +234,8 @@ class Backend:
                 raise HFPError("device already has a call")
             call_id = self.store.new_call(path, number, "outgoing", "requested")
             self.current[path] = call_id
+            if owner:
+                self.store.update_task(owner, call_id=call_id)
             try:
                 await connection.dial(number)
             except (HFPError, OSError):

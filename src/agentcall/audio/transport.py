@@ -32,6 +32,7 @@ class SCOAudio:
         self.owner = False
         self.closed = False
         self.write_lock = asyncio.Lock()
+        self.playout_until = 0.0
         log.info(
             "SCO ready: input/output=s16le mono %sHz codec=%s mtu=%s", self.rate, codec, self.mtu
         )
@@ -78,14 +79,18 @@ class SCOAudio:
             self.rx_buffer.extend(data)
         raise ConnectionError("SCO closed")
 
-    async def send_packet(self, packet):
+    async def send_packet(self, packet, duration=0):
         # sock_sendall may split a partial write, which would corrupt SCO packet boundaries.
         loop = asyncio.get_running_loop()
+        delay = self.playout_until - loop.time()
+        if delay > 0:
+            await asyncio.sleep(delay)
         while True:
             try:
                 written = self.sock.send(packet)
                 if written != len(packet):
                     raise ConnectionError("partial SCO packet write")
+                self.playout_until = max(loop.time(), self.playout_until) + duration
                 return
             except BlockingIOError:
                 ready = loop.create_future()
@@ -114,7 +119,7 @@ class SCOAudio:
                     size = self.mtu - self.mtu % 2
                     for offset in range(0, len(pcm), size):
                         part = pcm[offset : offset + size]
-                        await self.send_packet(part)
+                        await self.send_packet(part, len(part) / (self.rate * 2))
                         self.pending_bytes -= len(part)
                         self.tx_bytes += len(part)
                 else:
@@ -125,10 +130,25 @@ class SCOAudio:
                         del self.tx_buffer[: msbc.PCM_BYTES]
                         packet = self.encoder.encode(frame)
                         for offset in range(0, len(packet), self.mtu):
-                            await self.send_packet(packet[offset : offset + self.mtu])
+                            await self.send_packet(
+                                packet[offset : offset + self.mtu],
+                                0.0075 * len(packet[offset : offset + self.mtu]) / 60,
+                            )
                         self.tx_bytes += len(frame)
             finally:
                 self.pending_bytes = 0
+
+    async def finish_output(self):
+        if self.codec == 2 and self.tx_buffer:
+            # Padding is required to encode the final partial mSBC frame.
+            padded = bytes(self.tx_buffer) + bytes(msbc.PCM_BYTES - len(self.tx_buffer))
+            self.tx_buffer.clear()
+            await self.send(padded)
+
+    async def wait_playout(self):
+        remaining = self.playout_until - asyncio.get_running_loop().time()
+        if remaining > 0:
+            await asyncio.sleep(remaining)
 
     def close(self):
         if self.closed:
