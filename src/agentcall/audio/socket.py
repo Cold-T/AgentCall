@@ -1,5 +1,8 @@
 """Adapted libc SCO connector from handsfree-linux; see vendor license."""
 
+import asyncio
+import errno
+
 import ctypes as _ct
 import logging
 import struct as _struct
@@ -127,3 +130,15 @@ def sco_authorize(sock, voice_setting):
     """
     sock.setsockopt(_SOL_BLUETOOTH, _BT_VOICE, _struct.pack("@H", voice_setting))
     sock.recv(1)
+
+
+async def sco_wait_connected(sock, timeout):
+    """Wait for deferred SCO setup to reach BT_CONNECTED before querying MTU."""
+    async with asyncio.timeout(timeout):
+        while True:
+            try:
+                return _struct.unpack("@H", sock.getsockopt(17, 1, 2))[0]
+            except OSError as exc:
+                if exc.errno != errno.ENOTCONN:
+                    raise
+                await asyncio.sleep(0.02)

@@ -33,9 +33,13 @@ async def test_incoming_sco_accepts_native_mac_string(monkeypatch):
     backend.bluez.adapter_address = address
     monkeypatch.setattr("agentcall.service.backend.sco_listen", lambda *args, **kwargs: listener.detach())
     monkeypatch.setattr(
-        "agentcall.service.backend.SCOAudio", lambda sock, codec: SCOAudio(sock, codec, mtu=48)
+        "agentcall.service.backend.SCOAudio", lambda sock, codec, mtu: SCOAudio(sock, codec, mtu=mtu)
     )
     monkeypatch.setattr("agentcall.service.backend.sco_authorize", lambda *args: None)
+    async def connected(sock, timeout):
+        return 48
+
+    monkeypatch.setattr("agentcall.service.backend.sco_wait_connected", connected)
     monkeypatch.setattr(asyncio.get_running_loop(), "sock_accept", accept)
     try:
         await backend.open_audio(DEVICE)
@@ -80,9 +84,13 @@ async def test_audio_listener_survives_long_ringing_before_answer(monkeypatch):
     monkeypatch.setattr("agentcall.service.backend.sco_listen", lambda *args, **kwargs: listener.detach())
     monkeypatch.setattr("agentcall.service.backend._sco_connect", no_outbound)
     monkeypatch.setattr(
-        "agentcall.service.backend.SCOAudio", lambda sock, codec: SCOAudio(sock, codec, mtu=48)
+        "agentcall.service.backend.SCOAudio", lambda sock, codec, mtu: SCOAudio(sock, codec, mtu=mtu)
     )
     monkeypatch.setattr("agentcall.service.backend.sco_authorize", lambda *args: None)
+    async def connected(sock, timeout):
+        return 48
+
+    monkeypatch.setattr("agentcall.service.backend.sco_wait_connected", connected)
     monkeypatch.setattr(asyncio.get_running_loop(), "sock_accept", accept)
     try:
         await backend.open_audio(DEVICE)
@@ -167,7 +175,7 @@ async def test_listens_before_codec_confirmation_and_authorizes_selected_codec(
         assert setting == voice
         steps.append("authorize")
 
-    def audio(sock, codec):
+    def audio(sock, codec, mtu):
         assert codec == selected_codec and steps == ["listen", "codec", "authorize"]
         return SCOAudio(sock, 1, mtu=48)  # Avoid requiring libsbc on CI.
 
@@ -178,6 +186,10 @@ async def test_listens_before_codec_confirmation_and_authorizes_selected_codec(
     monkeypatch.setattr("agentcall.service.backend.sco_listen", listen)
     monkeypatch.setattr("agentcall.service.backend.sco_authorize", authorize)
     monkeypatch.setattr("agentcall.service.backend.SCOAudio", audio)
+    async def connected(sock, timeout):
+        return 48
+
+    monkeypatch.setattr("agentcall.service.backend.sco_wait_connected", connected)
     monkeypatch.setattr(asyncio.get_running_loop(), "sock_accept", accept)
     try:
         await backend.open_audio(DEVICE)
@@ -235,3 +247,40 @@ def test_listener_enables_deferred_setup_after_bind_before_listen(monkeypatch):
     monkeypatch.setattr("agentcall.audio.socket._load_libc", Libc)
     assert sco_listen("AA:BB:CC:DD:EE:FF", 0x0060, defer_setup=True) == 42
     assert steps == [11, "bind", 7, "listen"]
+
+
+async def test_wait_for_deferred_hci_completion_without_consuming_audio():
+    import errno
+    from agentcall.audio.socket import sco_wait_connected
+
+    class Socket:
+        attempts = 0
+
+        def getsockopt(self, *args):
+            self.attempts += 1
+            if self.attempts < 3:
+                raise OSError(errno.ENOTCONN, "HCI setup in progress")
+            return b"\x3c\x00"
+
+    sock = Socket()
+    assert await sco_wait_connected(sock, 1) == 60
+    assert sock.attempts == 3
+
+
+async def test_deferred_hci_wait_is_bounded_and_preserves_real_failures():
+    import errno
+    from agentcall.audio.socket import sco_wait_connected
+
+    class Socket:
+        error = errno.ENOTCONN
+
+        def getsockopt(self, *args):
+            raise OSError(self.error, "SCO failure")
+
+    sock = Socket()
+    with pytest.raises(TimeoutError):
+        await sco_wait_connected(sock, 0.01)
+    sock.error = errno.ECONNRESET
+    with pytest.raises(OSError) as error:
+        await sco_wait_connected(sock, 1)
+    assert error.value.errno == errno.ECONNRESET

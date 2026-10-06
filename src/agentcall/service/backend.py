@@ -7,7 +7,7 @@ import time
 
 from dbus_next import Variant
 
-from agentcall.audio.socket import _sco_connect, sco_authorize, sco_listen
+from agentcall.audio.socket import _sco_connect, sco_authorize, sco_listen, sco_wait_connected
 from agentcall.audio.transport import SCOAudio
 from agentcall.bluetooth.dbus import AG_UUID, AGENT_PATH, BlueZ
 from agentcall.bluetooth.hfp import HFPConnection, HFPError
@@ -463,7 +463,14 @@ class Backend:
                     f"; last connector error: {last_connect_error}" if last_connect_error else ""
                 )
                 raise RuntimeError("SCO connection unavailable after phone answered" + detail)
-            audio = SCOAudio(sock, codec)
+            try:
+                # The deferred authorization read starts asynchronous HCI setup.
+                # MTU is unavailable until the kernel completes that setup.
+                mtu = await sco_wait_connected(sock, self.config.audio_timeout_seconds)
+                audio = SCOAudio(sock, codec, mtu=mtu)
+            except BaseException:
+                sock.close()
+                raise
             self.audio[device] = audio
             self.emit("audio.ready", device=device, **audio.status())
         except (OSError, RuntimeError, HFPError, TimeoutError) as exc:
