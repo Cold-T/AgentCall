@@ -861,7 +861,7 @@ async def test_api_defaults_goal_completion_and_transcription_without_dialing(ri
     assert task["state"] == "saved" and not task["input"]["start_immediately"]
     assert task["input"]["background"] == DEFAULT_BACKGROUND
     assert task["config"]["options"] == (
-        {"transcription": {"model": "gpt-4o-mini-transcribe"}}
+        {"transcription": {"model": "gpt-4o-mini-transcribe"}, "speed": 1.2}
         if rig.provider == "openai"
         else {"inputAudioTranscription": {}, "outputAudioTranscription": {}}
     )
