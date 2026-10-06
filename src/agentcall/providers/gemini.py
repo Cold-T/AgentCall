@@ -73,7 +73,9 @@ class GeminiLive:
             "generationConfig": generation,
             "systemInstruction": {"parts": [{"text": context}]},
             "realtimeInputConfig": realtime,
-            "tools": [
+        }
+        if tools:
+            setup["tools"] = [
                 {
                     "functionDeclarations": [
                         {
@@ -85,10 +87,7 @@ class GeminiLive:
                         for t in tools
                     ]
                 }
-            ],
-        }
-        if not tools:
-            setup.pop("tools")
+            ]
         for key in (
             "inputAudioTranscription",
             "outputAudioTranscription",

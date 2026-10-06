@@ -32,7 +32,7 @@ phone --json task show TASK_ID
 
 ## 验证边界
 
-软件测试使用模拟手机 AG、真实本地 WebSocket 和 SCO socket，验证协议、音频和任务闭环；这不证明 OpenAI 云端或手机兼容性。按用户约定，真实 OpenAI API 验证保留待执行，Android / iPhone SIM 通话验收统一在 CP6。
+软件测试使用模拟手机 AG、真实本地 WebSocket 和 SCO socket，验证协议、音频和任务闭环；这不证明 OpenAI 云端或手机兼容性。OpenAI 已在 iPhone 完成一次真实双向音频与打断验收，详见 [iPhone 记录](iphone-acceptance.md)；Android / iPhone 完整 SIM 通话验收仍在 CP6。
 
 配置密钥后，可先运行 `.venv/bin/python scripts/verify_openai.py`。该命令实际访问 API（会产生用量），确认会话配置、PCM 输入和音频输出，不拨号。可用 `AGENTCALL_OPENAI_MODEL` 覆盖模型；可用模型取决于账户权限。它不能替代真机任务验收。
 
@@ -60,7 +60,14 @@ phone --json task show TASK_ID
 
 ### 自然结束语
 
-固定模型说明和工具描述要求静默提交结果与挂断，不对接听者解释工具调用、结果提交、重试或“结束流程”。`finish_task` 成功后仅自然致谢、告别，例如“谢谢您的帮助，再见。”，说完再调用 `hangup`。缺少结束语导致挂断被推迟时，工具反馈也要求直接补充告别并静默重试。仍保留结束语音频播放完成后才实际挂断的保护。明确禁止“我把情况整理一下，再结束通话”“我先整理／记录／提交一下”“我先处理结束流程”及同义表达，规则覆盖工具调用前后，整理、记录、提交和挂断均为静默内部操作。默认网页背景、API 默认背景、固定模型指令和结果工具说明共同包含此要求；即使自定义背景，也仍应用固定结束规则。提示调整需要实际电话复测，不能保证模型每次都严格遵循。
+结束顺序：
+
+1. 完成任务要求的口头交流（包括复述、核对及被打断的内容），等待必要回复。
+2. 调用 `finish_task` 静默提交真实结果；计划或工具参数不算已经说出，未完成的要求须如实记录。
+3. 简短致谢并说出告别。
+4. 调用 `hangup` 静默挂断；服务等待告别音频发送完成。
+
+工具调用、结果整理与重试均为内部操作，向接听者只说通话内容，不预告或解释这些步骤。固定指令适用于自定义或空背景；默认背景主要提供开场与对话风格，工具说明提供各自的执行条件。规则精简属于提示调整，真实模型遵循情况仍需在实际通话中确认。
 
 ### 开场静默
 
@@ -70,7 +77,6 @@ phone --json task show TASK_ID
 
 新建任务省略或留空 `completion_criteria` 时，后台自动使用 `goal`；显式填写的具体完成条件保留。OpenAI 默认启用 `transcription: {model: "gpt-4o-mini-transcribe"}`，Gemini 默认启用 `inputAudioTranscription: {}` 和 `outputAudioTranscription: {}`，切换 provider 时也使用对应默认值。网页不再自行补齐转写参数，两种入口共同使用后台默认配置。显式指定的转写参数保持有效（OpenAI 可显式传 `transcription: null` 关闭）；原有任务的配置快照不改写。API 创建后默认仅保存，不自动拨号。
 
-
 ## HFP 服务发布与音频建立
 
 本机以 Hands-Free UUID `0000111e-0000-1000-8000-00805f9b34fb` 注册 BlueZ profile，保留默认的客户端与服务端能力。不要限制为 `Role=client`：该设置会关闭本机 SDP 免提服务发布及接收手机 RFCOMM 连接的监听，虽能主动连接手机控制通道，手机却无法发现本机的免提服务。依据 [BlueZ profile 实现](https://github.com/bluez/bluez/blob/master/src/profile.c)，注册后应在适配器 UUID 列表看到 Hands-Free 服务。
@@ -79,6 +85,6 @@ SCO 监听在响铃期间保持等待，不以固定 20 次监听轮询提前结
 
 接通后的任务音频就绪判定还必须成功读取首包 PCM；仅有响铃阶段的 SCO socket 不够。首包会保留给输入桥接及录音，不重复计数。若首读收到连接重置或 EOF，记录 `task.audio_reconnecting`，在原音频就绪时限内替换 SCO 连接，保持同一次通话，不重新拨号。收到可用音频后才开始模型对话，仍保留开场 1 秒静默。重建持续失败、超过音频或最长通话时限、取消、手机已结束等情况正常退出；已经开始对话后的音频故障仍保留失败记录。
 
-音频监听先于 `AT+BCC` / `AT+BCS` 编码协商启动，使用 Linux `BT_DEFER_SETUP` 暂缓接受手机的 SCO 请求。接受正确手机的连接后，依据协商结果设置 `BT_VOICE`，再执行授权读取；授权读取返回零不是音频 EOF，不送入转写或录音。这样避免协商后才监听而漏掉立即到达的 mSBC 连接，并保留 CVSD 回退。`audio.listening` 表示监听已启动；只有 `audio.ready` 和任务开始收发音频后才能认为模型对话已启动。此修改经模拟回归验证，双向声音与转写仍需通过服务 HTTP API 发起获授权的真机通话验证。
+音频监听先于 `AT+BCC` / `AT+BCS` 编码协商启动，使用 Linux `BT_DEFER_SETUP` 暂缓接受手机的 SCO 请求。接受正确手机的连接后，依据协商结果设置 `BT_VOICE`，再执行授权读取；授权读取返回零不是音频 EOF，不送入转写或录音。codec 选择与最终确认分开，避免等待最终 AT OK 时阻塞手机先到达的 SCO 请求；对协商选定的 CVSD 或 mSBC 使用匹配参数。`audio.listening` 表示监听已启动；只有 `audio.ready` 和任务开始收发音频后才能认为模型对话已启动。iPhone 在响铃阶段重新协商 codec 时，服务会先恢复监听，再发送 `AT+BCS`，接收替代音频链路；`audio.ready` 仍要求最终 codec 确认。模拟回归和本次 iPhone 真机结果见 [验收记录](iphone-acceptance.md)。
 
 延迟接受的 SCO 授权读取只启动内核 HCI 建链，并不代表链路已经就绪。服务在配置的音频超时内等待 `SCO_OPTIONS` 的 MTU 可读，只重试 `ENOTCONN`；连接重置等其他错误立即保留并报告，等待失败会关闭 socket。不会将这段授权等待当作收到模型输入。

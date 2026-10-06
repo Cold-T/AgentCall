@@ -25,6 +25,7 @@ class HFPConnection:
         self.ready = False
         self.codec = 1
         self.codec_confirmed = asyncio.Event()
+        self.codec_selected = asyncio.Event()
         self.indicators = {}
         self.values = {}
         self.state = "unknown"
@@ -35,6 +36,7 @@ class HFPConnection:
         self.keepalive = None
         self.closed = False
         self.features = 0
+        self.prepare_codec = None
 
     def notify(self, kind, **data):
         self.emit(kind, device=self.device, **data)
@@ -57,6 +59,7 @@ class HFPConnection:
             if self.closed:
                 raise HFPError("HFP closed during optional command")
             if not (self.preferred_codec == "msbc" and self.features & (1 << 9)):
+                self.codec_selected.set()
                 self.codec_confirmed.set()
             self.ready = True
             self.notify("hfp.ready", state=self.state, codec=self.codec)
@@ -81,6 +84,11 @@ class HFPConnection:
                     return await future
             except TimeoutError as exc:
                 # Late OK must never be mistaken for the next command's response.
+                self.notify(
+                    "hfp.error",
+                    error="AT response timeout; connection closed",
+                    command="ATD" if command.startswith("ATD") else command.split("=", 1)[0],
+                )
                 await self.close()
                 raise HFPError("AT response timeout; connection closed") from exc
             except asyncio.CancelledError:
@@ -143,6 +151,11 @@ class HFPConnection:
                 self.notify("hfp.error", error="phone selected unsupported codec")
                 asyncio.create_task(self.close())
             else:
+                # The AG can defer its final OK until the synchronous link is accepted.
+                # Expose its codec selection so deferred SCO authorization can proceed.
+                self.codec = codec
+                self.codec_confirmed.clear()
+                self.codec_selected.set()
                 asyncio.create_task(self.confirm_codec(codec))
         elif kind in ("ok", "error", "cme_error"):
             if self.pending and not self.pending.done():
@@ -158,12 +171,14 @@ class HFPConnection:
 
     async def confirm_codec(self, codec):
         try:
+            if self.prepare_codec is not None:
+                await self.prepare_codec()
             await self.command(at.cmd_bcs_confirm(codec))
             self.codec = codec
             self.codec_confirmed.set()
             self.notify("audio.codec", codec=codec)
-        except HFPError as exc:
-            self.notify("hfp.error", error=str(exc))
+        except (HFPError, TimeoutError) as exc:
+            self.notify("hfp.error", error=str(exc) or type(exc).__name__)
 
     def update_state(self, reason=None):
         call, setup, held = (self.values.get(k, 0) for k in ("call", "callsetup", "callheld"))

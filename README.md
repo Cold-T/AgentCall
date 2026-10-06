@@ -2,9 +2,9 @@
 
 在 Linux 上通过 Android 或 iPhone 的手机 SIM 拨打电话，让实时语音模型完成预设任务。所有业务通过 HTTP API 提供，CLI 和最简网页作为客户端；后台独立运行。
 
-项目计划基于 handsfree-linux 扩展，复用蓝牙与联系人实现并将核心功能从 GUI 解耦。通话控制和音频使用纯蓝牙 HFP / SCO，不依赖 ADB、手机 App 或屏幕操作；联系人和手机历史另用 PBAP。
+项目基于 handsfree-linux 扩展，复用蓝牙与联系人实现并将核心功能从 GUI 解耦。通话控制和音频使用纯蓝牙 HFP / SCO，不依赖 ADB、手机 App 或屏幕操作；联系人和手机历史另用 PBAP。
 
-**当前状态：CP2 蓝牙服务、CP3 OpenAI、CP4 Gemini 和 CP5 完整 CLI / API 已完成软件实现与自动验证。两家真实 API 验证保留待执行；Android / iPhone 真机验收安排在 CP6，手机兼容性仍未验证。**
+**当前状态：CP2 蓝牙服务、CP3 OpenAI、CP4 Gemini 和 CP5 完整 CLI / API 已完成软件实现与自动验证。Android 已完成基础通话与 PBAP 部分验收；iPhone 已验证 OpenAI mSBC 双向音频和打断。Gemini 真机验证与 CP6 完整验收仍待完成，详见 [验收记录](docs/acceptance.md)。**
 
 ## 架构
 
@@ -29,9 +29,9 @@ Linux 后台服务
 - [实施顺序和验收清单](docs/roadmap.md)
 - [建议模块结构](docs/layout.md)
 
-建议技术栈：Python、FastAPI、Typer、SQLite，通过 systemd 用户服务常驻运行。已固定 handsfree-linux 上游提交并保留 MIT 许可，见 [复用说明](docs/upstream.md)。
+实现采用 Python、FastAPI、Typer、SQLite，通过 systemd 用户服务常驻运行。已固定 handsfree-linux 上游提交并保留 MIT 许可，见 [复用说明](docs/upstream.md)。
 
-最终交付包括源代码、安装与运行说明、配置示例、CLI 帮助、API 文档，以及 Android / iPhone 的实际验收结果。具体 provider 模型、协议与配置将在实现阶段以官方文档核实。
+最终交付包括源代码、安装与运行说明、配置示例、CLI 帮助、API 文档，以及 Android / iPhone 的实际验收结果。provider 协议与配置见下方使用文档。
 
 ## 运行与验证
 

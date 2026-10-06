@@ -5,7 +5,7 @@ Each SCO packet over the air is 60 bytes:
   [0x01] [H2-SN] [57-byte SBC frame] [0x00 padding]
 
 libsbc ships with BlueZ — available as `libsbc1` on Debian/Ubuntu/Pi OS.
-If libsbc is not installed AVAILABLE is False and the app falls back to CVSD.
+If libsbc is not installed AVAILABLE is False; configuring mSBC prevents startup.
 """
 
 from __future__ import annotations

@@ -53,7 +53,8 @@ class CallRecording:
     def finish(self):
         temporary = None
         try:
-            if self.failed or not max(self.positions):
+            total_samples = max(self.positions)
+            if self.failed or not total_samples:
                 return None
             fd, temporary = tempfile.mkstemp(prefix=".recording-", dir=self.path.parent)
             with os.fdopen(fd, "wb") as file, wave.open(file, "wb") as output:
@@ -62,8 +63,8 @@ class CallRecording:
                 output.setframerate(self.rate)
                 for track in self.tracks:
                     track.seek(0)
-                for start in range(0, max(self.positions), self.rate):
-                    count = min(self.rate, max(self.positions) - start)
+                for start in range(0, total_samples, self.rate):
+                    count = min(self.rate, total_samples - start)
                     stereo = np.zeros((count, 2), dtype="<i2")
                     for channel, track in enumerate(self.tracks):
                         data = track.read(count * 2)

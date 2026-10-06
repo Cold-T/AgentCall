@@ -31,7 +31,7 @@ def headers():
     client_secret = os.environ.get("CF_ACCESS_CLIENT_SECRET")
     if bool(client_id) != bool(client_secret):
         emit_error("CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET must be configured together")
-    if client_id and client_secret:
+    if client_id:
         result.update({"CF-Access-Client-Id": client_id, "CF-Access-Client-Secret": client_secret})
     return result
 

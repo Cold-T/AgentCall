@@ -91,7 +91,7 @@
 
 ## 8. HTTP API 和 CLI
 
-以下是目标接口，当前尚未实现。
+以下接口已实现；完整参数和错误定义见 [API 文档](api.md) 与 [CLI 文档](cli.md)。
 
 | 操作 | HTTP API | CLI |
 | --- | --- | --- |
@@ -115,6 +115,6 @@
 
 ## 9. 运行和交付
 
-Python + FastAPI + Typer + SQLite。移除 GUI 依赖；若蓝牙代码依赖 GLib 主循环，通过独立线程或事件循环接入服务。通过 systemd 用户服务常驻运行，提供示例配置和安装说明。
+Python + FastAPI + Typer + SQLite；蓝牙通过 asyncio D-Bus 接入，无 GUI 或 GLib 依赖。通过 systemd 用户服务常驻运行，提供示例配置和安装说明。
 
 最终交付：源代码、安装与运行说明、配置示例、CLI 帮助、API 文档，以及 Android / iPhone 实际验收结果。

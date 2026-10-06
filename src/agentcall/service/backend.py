@@ -35,9 +35,9 @@ class Backend:
         self.running = False
         self.device_locks = {}
         self.audio_jobs = {}
+        self.audio_listening = {}
         self.audio_setup_lock = asyncio.Lock()
         self.pbap = PBAPClient(self.bluez.obex_call)
-        self.retry = None
 
     def incoming_pairing_enabled(self):
         return time.monotonic() < self.incoming_pairing_until
@@ -192,7 +192,7 @@ class Backend:
             self.error = "msbc configured but libsbc is not installed"
             return
         await self.register_bluetooth()
-        self.retry = self.spawn(self.reconnect_loop())
+        self.spawn(self.reconnect_loop())
 
     async def register_bluetooth(self):
         try:
@@ -212,6 +212,7 @@ class Backend:
             if old:
                 await old.close()
             connection = HFPConnection(sock, device, self.emit, self.config.codec)
+            connection.prepare_codec = lambda: self.prepare_audio_codec(device)
             self.connections[device] = connection
             try:
                 await connection.start()
@@ -375,6 +376,20 @@ class Backend:
             return
         self.audio_jobs[device] = self.spawn(self.open_audio(device))
 
+    async def prepare_audio_codec(self, device):
+        """Keep a deferred listener ready before acknowledging a new AG codec offer."""
+        if device not in self.current:
+            return
+        listening = self.audio_listening.setdefault(device, asyncio.Event())
+        if device in self.audio:
+            # iPhone replaces its ringing SCO before reporting the answered call.
+            # A socket that was ready earlier cannot receive the new connection.
+            self.stop_audio(device)
+            listening.clear()
+            self.emit("audio.reconnecting", device=device, reason="phone codec negotiation")
+        self.ensure_audio(device)
+        await asyncio.wait_for(listening.wait(), self.config.audio_timeout_seconds)
+
     async def open_audio(self, device):
         # Only socket establishment owns the listener, not the full lifetime of a call.
         async with self.audio_setup_lock:
@@ -382,6 +397,7 @@ class Backend:
 
     async def _open_audio(self, device):
         listener = None
+        listening = self.audio_listening.setdefault(device, asyncio.Event())
         try:
             connection = self.connections.get(device)
             if not connection:
@@ -392,11 +408,15 @@ class Backend:
             fd = sco_listen(local, 0x0060, defer_setup=True)
             listener = socket.socket(fileno=fd)
             listener.setblocking(False)
+            listening.set()
             self.emit("audio.listening", device=device)
-            if not connection.codec_confirmed.is_set():
+            if not connection.codec_selected.is_set():
                 await connection.command(at.cmd_bcc())
-                # Both CVSD and mSBC require successful BCS confirmation when negotiated.
-                await asyncio.wait_for(connection.codec_confirmed.wait(), 5)
+                # iPhone may send the BCS OK only after SCO acceptance. Wait for the
+                # selected codec here; require final confirmation after authorizing SCO.
+                await asyncio.wait_for(
+                    connection.codec_selected.wait(), self.config.audio_timeout_seconds
+                )
             codec = connection.codec
             voice = 0x0003 if codec == 2 else 0x0060
             remote = device.rsplit("dev_", 1)[1].replace("_", ":")
@@ -467,6 +487,9 @@ class Backend:
                 # The deferred authorization read starts asynchronous HCI setup.
                 # MTU is unavailable until the kernel completes that setup.
                 mtu = await sco_wait_connected(sock, self.config.audio_timeout_seconds)
+                await asyncio.wait_for(
+                    connection.codec_confirmed.wait(), self.config.audio_timeout_seconds
+                )
                 audio = SCOAudio(sock, codec, mtu=mtu)
             except BaseException:
                 sock.close()
@@ -474,10 +497,11 @@ class Backend:
             self.audio[device] = audio
             self.emit("audio.ready", device=device, **audio.status())
         except (OSError, RuntimeError, HFPError, TimeoutError) as exc:
-            self.emit("audio.error", device=device, error=str(exc))
+            self.emit("audio.error", device=device, error=str(exc) or type(exc).__name__)
         finally:
             if listener:
                 listener.close()
+            listening.clear()
 
     def stop_audio(self, device):
         task = self.audio_jobs.pop(device, None)

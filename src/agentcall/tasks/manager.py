@@ -196,7 +196,6 @@ class TaskRun:
         self.audio_chunks = 0
         self.result_audio_floor = None
         self.last_audio_response = None
-        self.opened = False
         self.recording = None
 
     def spawn(self, coro, outcome):
@@ -204,18 +203,21 @@ class TaskRun:
         self.children.add(task)
 
         def finished(t):
-            if not t.cancelled() and t.exception():
+            if t.cancelled():
+                return
+            error = t.exception()
+            if error:
                 call = self.linked_call()
                 if outcome == "audio_failed" and (
-                    (self.hangup_requested and isinstance(t.exception(), OSError))
+                    (self.hangup_requested and isinstance(error, OSError))
                     or (call and call["ended_at"])
                 ):
                     # The phone ending a call closes SCO; that EOF is expected cleanup.
                     self.manager.wake.set()
                     return
                 self.failure = TaskFailure(
-                    "model_disconnected" if isinstance(t.exception(), ProviderError) else outcome,
-                    str(t.exception()),
+                    "model_disconnected" if isinstance(error, ProviderError) else outcome,
+                    str(error),
                 )
                 self.done.set()
                 self.manager.wake.set()
@@ -284,7 +286,7 @@ class TaskRun:
                     raise TaskFailure(
                         "audio_failed", "SCO received no PCM before audio readiness deadline"
                     ) from exc
-                except (OSError, ConnectionError) as exc:
+                except OSError as exc:
                     # The ringing SCO socket can be reset when the phone answers.
                     # Recover within this call's original audio deadline before speaking.
                     audio.owner = False
@@ -309,7 +311,6 @@ class TaskRun:
             try:
                 self.provider = self.manager.factory(ProviderConfig(**self.task["config"]))
                 await self.provider.open(instructions(self.task), TOOLS)
-                self.opened = True
             except ProviderError as exc:
                 raise TaskFailure("model_connection_failed", str(exc)) from exc
             self.spawn(self.read_provider(), "model_disconnected")
@@ -503,10 +504,9 @@ class TaskRun:
                 if not has_closing:
                     self.manager.event(self.id, "task.hangup_deferred", reason="no_spoken_closing")
                     raise ValueError(
-                        "Speak a brief closing statement aloud before calling hangup again. "
-                        "The hangup reason is not spoken audio. Say only a natural thank-you "
-                        "and goodbye in the selected language; do not explain this error or "
-                        "any internal procedure. Then retry hangup silently."
+                        "Speak a brief closing statement (thank-you and goodbye) in the selected language, then "
+                        "retry hangup silently. Tool arguments are not spoken audio; keep "
+                        "internal errors and procedures private."
                     )
                 if self.hangup_job is None:
                     self.hangup_call_id = call_id

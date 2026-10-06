@@ -105,6 +105,7 @@ class Agent(ServiceInterface):
     @method()
     def AuthorizeService(self, device: "o", uuid: "s"):
         if uuid != AG_UUID and uuid != HF_UUID:
+            self.backend.emit("device.service_rejected", device=device, uuid=uuid)
             raise DBusError("org.bluez.Error.Rejected", "unsupported service")
 
     @method()

@@ -17,7 +17,7 @@ async def test_incoming_sco_accepts_native_mac_string(monkeypatch):
     confirmed = asyncio.Event()
     confirmed.set()
     backend.connections[DEVICE] = SimpleNamespace(
-        codec_confirmed=confirmed, codec=1, closed=False, state="incoming"
+        codec_selected=confirmed, codec_confirmed=confirmed, codec=1, closed=False, state="incoming"
     )
     backend.current[DEVICE] = store.new_call(DEVICE, "123", "incoming", "incoming")
     host, peer = socket.socketpair(type=socket.SOCK_SEQPACKET)
@@ -62,7 +62,9 @@ async def test_audio_listener_survives_long_ringing_before_answer(monkeypatch):
     backend = Backend(Config(), store)
     confirmed = asyncio.Event()
     confirmed.set()
-    connection = SimpleNamespace(codec_confirmed=confirmed, codec=1, closed=False, state="alerting")
+    connection = SimpleNamespace(
+        codec_selected=confirmed, codec_confirmed=confirmed, codec=1, closed=False, state="alerting"
+    )
     backend.connections[DEVICE] = connection
     backend.current[DEVICE] = store.new_call(DEVICE, "123", "outgoing", "alerting")
     host, peer = socket.socketpair(type=socket.SOCK_SEQPACKET)
@@ -159,7 +161,9 @@ async def test_listens_before_codec_confirmation_and_authorizes_selected_codec(
     listener, listener_peer = socket.socketpair()
     host, peer = socket.socketpair(type=socket.SOCK_SEQPACKET)
     steps = []
-    connection = SimpleNamespace(codec_confirmed=confirmed, codec=1, closed=False, state="alerting")
+    connection = SimpleNamespace(
+        codec_selected=confirmed, codec_confirmed=confirmed, codec=1, closed=False, state="alerting"
+    )
 
     async def address():
         return "AA:BB:CC:DD:EE:FF"
@@ -295,3 +299,100 @@ async def test_deferred_hci_wait_is_bounded_and_preserves_real_failures():
     with pytest.raises(OSError) as error:
         await sco_wait_connected(sock, 1)
     assert error.value.errno == errno.ECONNRESET
+
+
+async def test_iphone_bcs_ok_waits_for_sco_authorization(monkeypatch):
+    """The final AT+BCS OK must not prevent us accepting the AG's SCO request."""
+    from conftest import Phone
+
+    from agentcall.bluetooth.hfp import HFPConnection
+
+    store = Store(":memory:")
+    backend = Backend(Config(codec="msbc"), store)
+    rfcomm, phone_sock = socket.socketpair()
+    phone = Phone(phone_sock, features=1 << 9)
+    authorized = asyncio.Event()
+    original_send = phone.send
+
+    async def send(text):
+        if phone.commands[-1] == "AT+BCS=2" and text == "OK\r\n":
+            await authorized.wait()
+        await original_send(text)
+
+    phone.send = send
+    connection = HFPConnection(rfcomm, DEVICE, backend.emit, "msbc", timeout=0.5)
+    backend.connections[DEVICE] = connection
+    listener, listener_peer = socket.socketpair()
+    host, peer = socket.socketpair(type=socket.SOCK_SEQPACKET)
+    replacement_host, replacement_audio_peer = socket.socketpair(type=socket.SOCK_SEQPACKET)
+
+    async def address():
+        return "AA:BB:CC:DD:EE:FF"
+
+    async def accept(sock):
+        assert connection.codec_selected.is_set()
+        assert not connection.codec_confirmed.is_set()
+        return (host if host.fileno() >= 0 else replacement_host), "11:22:33:44:55:66"
+
+    def authorize(sock, setting):
+        assert setting == 0x0003
+        authorized.set()
+
+    async def connected(sock, timeout):
+        await asyncio.wait_for(connection.codec_confirmed.wait(), timeout)
+        return 48
+
+    def audio(sock, codec, mtu):
+        assert codec == 2 and connection.codec_confirmed.is_set()
+        return SCOAudio(sock, 1, mtu=mtu)
+
+    backend.bluez.adapter_address = address
+    monkeypatch.setattr("agentcall.service.backend.sco_listen", lambda *a, **k: listener.detach())
+    monkeypatch.setattr("agentcall.service.backend.sco_authorize", authorize)
+    monkeypatch.setattr("agentcall.service.backend.sco_wait_connected", connected)
+    monkeypatch.setattr("agentcall.service.backend.SCOAudio", audio)
+    monkeypatch.setattr(asyncio.get_running_loop(), "sock_accept", accept)
+    try:
+        await connection.start()
+        backend.current[DEVICE] = store.new_call(DEVICE, "123", "outgoing", "alerting")
+        connection.state = "alerting"
+        backend.ensure_audio(DEVICE)
+        await asyncio.wait_for(backend.audio_jobs[DEVICE], 0.8)
+        assert authorized.is_set()
+        assert DEVICE in backend.audio
+        assert not connection.closed
+
+        # iPhone replaces ringing SCO before reporting an active call. The next
+        # BCS confirmation must wait for a fresh listener, not reuse the old socket.
+        first_audio = backend.audio[DEVICE]
+        replacement_listener, replacement_peer = socket.socketpair()
+        try:
+            authorized.clear()
+            connection.prepare_codec = lambda: backend.prepare_audio_codec(DEVICE)
+            monkeypatch.setattr(
+                "agentcall.service.backend.sco_listen",
+                lambda *a, **k: replacement_listener.detach(),
+            )
+            await phone.send("+BCS: 2\r\n")
+            from conftest import until
+
+            await until(
+                lambda: DEVICE in backend.audio and backend.audio[DEVICE] is not first_audio
+            )
+            assert first_audio.closed
+            assert authorized.is_set()
+            assert not connection.closed
+        finally:
+            replacement_listener.close()
+            replacement_peer.close()
+    finally:
+        backend.stop_audio(DEVICE)
+        await connection.close()
+        await phone.close()
+        host.close()
+        peer.close()
+        replacement_host.close()
+        replacement_audio_peer.close()
+        listener.close()
+        listener_peer.close()
+        store.close()

@@ -11,12 +11,12 @@ def now():
 
 class Store:
     def __init__(self, path):
-        self.recordings_dir = (
-            Path(path).expanduser().resolve().parent / "recordings" if path != ":memory:" else None
-        )
+        self.recordings_dir = None
         if path != ":memory:":
-            Path(path).expanduser().parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(str(Path(path).expanduser()) if path != ":memory:" else path)
+            path = Path(path).expanduser()
+            self.recordings_dir = path.resolve().parent / "recordings"
+            path.parent.mkdir(parents=True, exist_ok=True)
+        self.db = sqlite3.connect(str(path))
         self.db.row_factory = sqlite3.Row
         self.db.executescript("""
             PRAGMA journal_mode=WAL;

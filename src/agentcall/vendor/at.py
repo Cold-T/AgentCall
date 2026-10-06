@@ -6,10 +6,9 @@ and builds command strings to send to the phone (AG).
 
 from __future__ import annotations
 
-import re
 import logging
+import re
 from dataclasses import dataclass, field
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -56,33 +55,29 @@ def parse_line(line: str) -> ATEvent:
         m = pattern.match(line)
         if m:
             groups = m.groups()
-            params = _extract_params(kind, groups, line)
+            params = _extract_params(kind, groups)
             return ATEvent(kind=kind, raw=line, params=params)
 
     logger.debug("Unrecognised AT line: %r", line)
     return ATEvent(kind="unknown", raw=line)
 
 
-def _extract_params(kind: str, groups: tuple, raw: str) -> dict:
+def _extract_params(kind: str, groups: tuple) -> dict:
     if kind == "brsf":
         return {"features": int(groups[0])}
     if kind == "ciev":
         return {"index": int(groups[0]), "value": int(groups[1])}
-    if kind == "clip":
+    if kind in ("clip", "ccwa"):
         return {"number": groups[0], "type": int(groups[1])}
     if kind == "bcs":
         return {"codec": int(groups[0])}  # 1=CVSD, 2=mSBC
-    if kind == "vgm":
-        return {"gain": int(groups[0])}
-    if kind == "vgs":
+    if kind in ("vgm", "vgs"):
         return {"gain": int(groups[0])}
     if kind == "cme_error":
         return {"code": int(groups[0])}
     if kind == "cind_values":
         values = [int(x.strip()) for x in groups[0].split(",") if x.strip().isdigit()]
         return {"values": values}
-    if kind == "ccwa":
-        return {"number": groups[0], "type": int(groups[1])}
     if kind == "chld":
         return {"modes": [m.strip() for m in groups[0].split(",")]}
     if kind == "bvra":
@@ -113,13 +108,7 @@ def cmd_brsf(preferred: str = "cvsd") -> str:
 
 
 def cmd_bac(preferred: str = "msbc") -> str:
-    """AT+BAC — advertise supported codecs.
-
-    If mSBC previously failed (adapter doesn't support transparent SCO),
-    advertise CVSD only so the phone negotiates CVSD from the start and
-    sends CVSD audio over the air.  Otherwise the SCO voice setting and
-    the HFP codec negotiation would be mismatched, producing garbled audio.
-    """
+    """AT+BAC — advertise codecs allowed by the configured preference."""
     if preferred == "msbc":
         return f"AT+BAC={CODEC_CVSD},{CODEC_MSBC}"
     return f"AT+BAC={CODEC_CVSD}"
@@ -186,7 +175,7 @@ def cmd_clcc() -> str:
 
 
 def cmd_dtmf(digit: str) -> str:
-    """Send a DTMF tone (0-9, *, #, A-D)."""
+    """Send a DTMF tone (0-9, *, #)."""
     if not re.fullmatch(r"[0-9*#]", digit):
         raise ValueError("invalid DTMF digit")
     return f"AT+VTS={digit}"

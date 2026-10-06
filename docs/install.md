@@ -109,7 +109,7 @@ handsfree-linux、WirePlumber 或其他进程若已占用 HFP HF UUID，BlueZ �
 
 若适配器未启用，可用 `busctl --system set-property org.bluez /org/bluez/hci0 org.bluez.Adapter1 Powered b true`。配置中的 `adapter` 必须对应实际控制器。
 
-mSBC 需要 libsbc 和支持 transparent SCO 的控制器。只有成功 HFP codec 确认后才使用相应 BT_VOICE；协商后出错不会静默按另一种 codec 解码。多部手机的音频 socket 建立会串行协调，实际并行 SCO 能力取决于控制器，真机验收需另行确认。
+mSBC 需要 libsbc 和支持 transparent SCO 的控制器。依据 HFP codec 选择设置相应 BT_VOICE 授权 SCO，最终 codec 确认后才报告音频就绪；协商后出错不会静默按另一种 codec 解码。多部手机的音频 socket 建立会串行协调，实际并行 SCO 能力取决于控制器，真机验收需另行确认。
 
 ## 远程访问
 

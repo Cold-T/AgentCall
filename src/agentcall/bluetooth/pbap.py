@@ -18,13 +18,13 @@ def parse_cards(raw, device, book):
         phones = [str(p.value).strip() for p in card.contents.get("tel", [])]
         uid = str(card.uid.value) if hasattr(card, "uid") else name
         serialized = card.serialize()
+        stamp = ""
+        for key, props in card.contents.items():
+            if "call-datetime" in key:
+                stamp = str(props[0].value)
         for number in phones:
             if not number:
                 continue
-            stamp = ""
-            for key, props in card.contents.items():
-                if "call-datetime" in key:
-                    stamp = str(props[0].value)
             # Preserve timestamp exactly: a local time without Z is not UTC.
             identity = (
                 f"{device}:{book}:{uid}:{number}"

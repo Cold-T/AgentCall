@@ -1,8 +1,8 @@
 # Checkpoints 与验收
 
-CP2 已完成：无界面蓝牙服务的软件实现与自动验证通过。Android / iPhone 的完整真机验收统一安排在 CP6，不作为 CP2–CP5 的完成条件；手机兼容性在实际验收前保持未验证。
+CP2 已完成：无界面蓝牙服务的软件实现与自动验证通过。Android / iPhone 的完整真机验收统一安排在 CP6，不作为 CP2–CP5 的完成条件；手机兼容性按 CP6 逐项记录，部分通过不代表完整验收。
 
-CP3 / CP4 已使用模拟手机完成 provider 软件与协议验证；两家真实 API 验证保留待执行。真机验收范围仍包含通话控制、音频、PBAP、AI 任务和异常场景；真机发现的问题在 CP6 修复并回归。详见 [软件验证记录](verification.md) 和 [CP6 真机验收清单](acceptance.md)。
+CP3 / CP4 已使用模拟手机完成 provider 软件与协议验证；OpenAI 已通过一次 iPhone 真机双向音频验收，Gemini 真实 API 验证仍待执行。真机验收范围仍包含通话控制、音频、PBAP、AI 任务和异常场景；真机发现的问题在 CP6 修复并回归。详见 [软件验证记录](verification.md) 和 [CP6 真机验收清单](acceptance.md)。
 
 ## CP1 仓库初始化（已完成）
 
@@ -28,7 +28,7 @@ CP3 / CP4 已使用模拟手机完成 provider 软件与协议验证；两家真
 - [x] 实际通话状态、任务结果、异常原因分别保存。
 - [x] 使用模拟手机验证闭环；真实 SIM 通话闭环在 CP6 验收。
 
-真实 OpenAI API 验证保留待执行（用户确认）；见 [CP3 验证记录](cp3-verification.md)。
+软件验证见 [CP3 验证记录](cp3-verification.md)，最新真实通话结果见 [iPhone 验收记录](iphone-acceptance.md)。
 
 ## CP4 Gemini Live 接入（软件与协议验证已完成）
 
@@ -37,7 +37,7 @@ CP3 / CP4 已使用模拟手机完成 provider 软件与协议验证；两家真
 - [x] 配置覆盖在新通话生效；失败不自动切换 provider。
 - [x] 使用模拟手机验证两家 provider 的音频、转写及工具事件；真机闭环在 CP6 验收。
 
-真实 API 未访问；见 [CP4 验证记录](cp4-verification.md)。
+Gemini 真实 API 验证待执行；软件结果见 [CP4 验证记录](cp4-verification.md)。
 
 ## CP5 完整 CLI / API（软件验证已完成）
 
@@ -47,7 +47,7 @@ CP3 / CP4 已使用模拟手机完成 provider 软件与协议验证；两家真
 - [x] 完整 SQLite 数据和来源管理。
 - [x] 完整 CLI 帮助和 API 文档。
 
-见 [CP5 验证记录](cp5-verification.md)。真实 API 验证保留待执行，真机验收仍在 CP6。
+见 [CP5 验证记录](cp5-verification.md)。完整真机验收仍在 CP6。
 
 ## CP6 稳定性与 Android / iPhone 真机验收
 
@@ -73,7 +73,7 @@ CP3 / CP4 已使用模拟手机完成 provider 软件与协议验证；两家真
 
 | 平台 | 设备 / OS / Linux / 蓝牙适配器 | 验收证据 | 状态 |
 | --- | --- | --- | --- |
-| Android | 待记录 | 待记录 | 未验证，安排在 CP6 |
-| iPhone | 待记录 | 待记录 | 未验证，安排在 CP6 |
+| Android | Xiaomi 17 Pro Max；OS 待确认，环境详见记录 | [Android 记录](android-acceptance.md) | 基础通话、PBAP 已部分验收；其他待验证 |
+| iPhone | ColdT’s iPhone；型号 / iOS 待确认，环境详见记录 | [iPhone 记录](iphone-acceptance.md) | OpenAI mSBC 双向音频、无回声、打断已验证；其他待验证 |
 
 验收应记录日期、实际型号、系统与依赖版本、provider / 模型、执行步骤、日志和结果。PBAP 能力以手机实际授权和返回内容为准。没有真机证据时不得标记 Android / iPhone 验收通过。

@@ -3,6 +3,9 @@ const base = document.querySelector('meta[name="api-base"]').content;
 const $ = selector => document.querySelector(selector);
 const enc = encodeURIComponent;
 const form = $('#task-create');
+const tabs = [...document.querySelectorAll('nav button')];
+const deviceId = device => device.id || device.path.split('/').pop();
+const selectedModel = () => form.elements.model.value ? models[Number(form.elements.model.value)] : null;
 let models = [];
 const voices = {openai:['marin','cedar','alloy','ash','ballad','coral','echo','sage','shimmer','verse'], gemini:['Aoede','Puck','Charon','Kore','Fenrir','Zephyr','Leda','Orus']};
 const chosenVoices = new Map();
@@ -58,14 +61,13 @@ function table(selector, rows, columns, actions) {
 }
 async function tab(name) {
   document.querySelectorAll('main > section').forEach(item => { item.hidden = item.id !== name; });
-  document.querySelectorAll('nav button').forEach(item => {
+  tabs.forEach(item => {
     const selected = item.dataset.tab === name;
     item.setAttribute('aria-selected', String(selected)); item.tabIndex = selected ? 0 : -1;
   });
   if (name === 'call') await Promise.all([refreshContacts(), currentCalls()]);
   if (name === 'history') await refreshHistory();
 }
-const tabs = [...document.querySelectorAll('nav button')];
 for (const [index, item] of tabs.entries()) {
   item.onclick = () => run(() => tab(item.dataset.tab));
   item.onkeydown = event => {
@@ -77,7 +79,7 @@ $('#logout').onclick = () => run(async () => { await api('/session/logout', 'POS
 async function refreshDevices() {
   const devices = await api('/devices');
   table('#device-list', devices.map(row => ({...row, bluetooth:row.connected ? '已连接' : '未连接', phone:row.hfp_ready ? '可通话' : '未就绪'})), [['name','设备'], ['address','地址'], ['bluetooth','蓝牙'], ['phone','通话状态']], row => {
-    const id = row.id || row.path.split('/').pop();
+    const id = deviceId(row);
     return [['pair','配对'], ['connect','连接'], ['disconnect','断开'], ['unpair','取消配对'], ['sync','同步联系人与历史']].map(([action,label]) => [label, async () => {
       if (action === 'unpair' && !window.confirm('取消与 ' + (row.name || row.address || id) + ' 的配对？这会断开连接并清除自动重连，需要重新配对才能使用。')) return;
       await api(`/devices/${enc(id)}/${action}`, 'POST'); notice(label + '请求已完成'); await refreshDevices();
@@ -87,11 +89,11 @@ async function refreshDevices() {
     const selected = select.value; select.replaceChildren();
     if (select.dataset.empty) select.add(new Option(select.dataset.empty, ''));
     else select.add(new Option(devices.length ? '请选择通话设备' : '请先连接设备', ''));
-    for (const device of devices) select.add(new Option((device.name || device.address) + (device.connected ? ' · 已连接' : ''), device.id || device.path.split('/').pop()));
+    for (const device of devices) select.add(new Option((device.name || device.address) + (device.connected ? ' · 已连接' : ''), deviceId(device)));
     if (selected && [...select.options].some(option => option.value === selected)) select.value = selected;
     else if (!select.dataset.empty) {
       const device = devices.find(item => item.hfp_ready) || devices.find(item => item.connected);
-      if (device) select.value = device.id || device.path.split('/').pop();
+      if (device) select.value = deviceId(device);
     }
   });
   await refreshContacts();
@@ -138,7 +140,7 @@ form.elements.contact_id.onchange = () => { if (form.elements.contact_id.value) 
 form.elements.number.oninput = () => { if (form.elements.number.value) form.elements.contact_id.value = ''; };
 $('#refresh-contacts').onclick = () => run(refreshContacts, $('#refresh-contacts'));
 function loadVoices() {
-  const model = form.elements.model.value ? models[Number(form.elements.model.value)] : null;
+  const model = selectedModel();
   const select = form.elements.voice; select.replaceChildren();
   if (!model) { select.add(new Option('请先选择模型', '')); select.disabled = true; return; }
   select.disabled = false;
@@ -149,14 +151,14 @@ function loadVoices() {
 }
 form.elements.model.onchange = () => { loadVoices(); run(saveCallDefaults); };
 form.elements.voice.onchange = () => {
-  const model = form.elements.model.value ? models[Number(form.elements.model.value)] : null;
+  const model = selectedModel();
   if (model) chosenVoices.set(model.provider, form.elements.voice.value);
   run(saveCallDefaults);
 };
 form.elements.max_call_seconds.onchange = () => run(saveCallDefaults);
 async function saveCallDefaults() {
-  const selected = models[Number(form.elements.model.value)];
-  if (!form.elements.model.value || !selected || !form.elements.voice.value) throw new Error('请选择模型和声音。');
+  const selected = selectedModel();
+  if (!selected || !form.elements.voice.value) throw new Error('请选择模型和声音。');
   if (!form.elements.max_call_seconds.checkValidity()) throw new Error('最长通话秒数应为 1–3600。');
   const chosen = {...selected, voice:form.elements.voice.value};
   const duration = Number(form.elements.max_call_seconds.value);

@@ -4,12 +4,10 @@ from typing import Literal
 from jsonschema import Draft202012Validator, SchemaError
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-DEFAULT_BACKGROUND = """你是受我委托打电话的 AI 助理。电话接通后，你的对话对象就是接听电话的人，请直接与对方交谈。
-开场时简短说明你是代为来电的 AI 助理，并根据任务目标说明来意，然后提出第一个问题。不要朗读任务说明、背景资料或内部操作过程。
-使用自然、简洁、礼貌的口语，每次只问一个主要问题，等待对方回答后继续。对方已经提供的信息不要重复询问；听不清或存在歧义时，请对方确认。
-依据任务目标、背景和提供的资料推进对话。缺少的信息向对方询问，不编造事实，不替我作出未经授权的承诺。
-遇到自动语音菜单时，根据提示使用 send_dtmf。达到完成条件后，确认关键信息并通过 finish_task 提交结构化结果；随后向对方致谢、说完结束语，再调用 hangup。无法完成时，如实记录原因和已获取的信息。
-结束通话时不要说“我把情况整理一下，再结束通话”“我先整理／记录／提交一下”“我先处理结束流程”或任何类似旁白。整理、记录、提交结果和挂断都是静默内部操作，禁止在工具调用前后向对方预告或解释。确认必要信息后，静默提交结果，只说自然、简短的致谢和告别（如“谢谢，再见”），说完后静默挂断；不要承诺稍后处理或汇报。"""
+DEFAULT_BACKGROUND = """你是受我委托打电话的 AI 助理，直接与接听方交谈。
+开场简短介绍身份和来意，并提出第一个问题。背景和资料用于理解任务，交流使用自然、简洁、礼貌的口语。
+每次只问一个主要问题，等待回答后继续；利用对方已提供的信息推进任务，听不清或有歧义时请对方确认。
+依据任务目标、背景和已知资料交谈，缺失信息向对方询问；只作出已获授权的承诺。"""
 
 
 class ProviderConfig(BaseModel):
@@ -141,29 +139,26 @@ def instructions(task):
     }
     background = context.pop("background")
     return (
-        "You are carrying out a telephone task. Speak in " + task["config"]["language"] + ". "
-        "Only use the supplied facts; ask the other person when information is missing. "
-        "Use send_dtmf for phone menus. Submit finish_task with completed, partial or incomplete "
-        "and an object matching result_schema. Completion is separate from phone state. "
-        "After finish_task succeeds, speak a brief closing statement aloud to the other person, "
-        "then call hangup. Do not use a tool-only response to hang up without spoken closing "
-        "audio. Text in hangup(reason) is internal and is never spoken to the other person. "
-        "Execute tools silently. Never announce or narrate submitting results, tool calls, "
-        "internal processing, completion procedures, or hanging up. After finish_task, "
-        "say only a natural thank-you and goodbye in the selected language, for example "
-        "'谢谢您的帮助，再见。' in Chinese, then call hangup silently. If a tool needs "
-        "retrying, do not explain the internal retry to the other person. "
-        "Never infer whether the phone is connected or disconnected.\n"
-        "Mandatory closing rule, including before and after all tool calls: "
-        "Never say that you will organize, summarize, record, submit, or process anything "
-        "before ending the call. Do not promise later processing or reporting. "
-        "Never say '我把情况整理一下，再结束通话', '我先整理一下', '我先记录一下', "
-        "'我先提交一下', '我先处理结束流程', or paraphrases of these. "
-        "Confirm only necessary facts with the recipient, submit the result silently, "
-        "say a short natural thank-you and goodbye, then hang up silently.\n"
-        + background
-        + "\nTask context:\n"
-        + json.dumps(context, ensure_ascii=False)
+        "You are an AI assistant carrying out a telephone task for the caller. Speak in "
+        + task["config"]["language"]
+        + ". Address the recipient directly, using one main question per turn. "
+        "Use supplied facts and recipient answers; ask for missing or unclear information. "
+        "Use send_dtmf for phone menus. Do not infer connection or disconnection from conversation.\n"
+        "Completion:\n"
+        "Before finish_task, finish all task-required spoken exchanges: questions, answers, "
+        "repetitions, explanations, checks and confirmations. Actually say each required "
+        "item, receive required recipient replies, and complete any interrupted exchange. "
+        "Plans and text in tool arguments or result fields do not count as spoken actions. "
+        "Submit an object matching result_schema with status completed only when the "
+        "completion criteria are met; otherwise report unmet requirements honestly as "
+        "partial or incomplete. Task completion is separate from phone state.\n"
+        "Closing:\n"
+        "Execute all tools silently, including retries. Keep internal organizing, recording, "
+        "submitting and hanging up out of spoken dialogue, and make no promise of later "
+        "processing or reporting. After finish_task succeeds, say only a brief, natural "
+        "thank-you and goodbye in the selected language. Let the spoken goodbye audio "
+        "finish before calling hangup silently; hangup(reason) is internal text.\n"
+        "Background:\n" + background + "\nTask context:\n" + json.dumps(context, ensure_ascii=False)
     )
 
 
@@ -182,7 +177,13 @@ TOOLS = [
     {
         "type": "function",
         "name": "finish_task",
-        "description": "Silently submit task completion and structured result. Never say you will organize, record, summarize or submit the information before ending the call.",
+        "description": (
+            "Silently submit status and structured result after completing all required "
+            "spoken exchanges and receiving required replies. Say required content aloud "
+            "and finish interrupted exchanges first; plans and tool arguments are not speech. "
+            "Report unmet requirements honestly. After success, only a brief spoken "
+            "thank-you and goodbye remain before hangup."
+        ),
         "parameters": {
             "type": "object",
             "properties": {

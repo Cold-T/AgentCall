@@ -37,6 +37,6 @@ Gemini 没有 OpenAI response ID，适配器为每轮生成内部 ID。generatio
 
 ## 验证范围
 
-本地实际 WebSocket + 模拟 HFP AG + SCO socket 已验证 Gemini 和 OpenAI 使用同样的任务输入完成通话闭环。详见 [CP4 验证记录](cp4-verification.md)。两家的真实 API 验证均保留待执行；Android / iPhone 验收在 CP6。
+本地实际 WebSocket + 模拟 HFP AG + SCO socket 已验证 Gemini 和 OpenAI 使用同样的任务输入完成通话闭环。详见 [CP4 验证记录](cp4-verification.md)。Gemini 的真实 API 验证仍待执行；OpenAI 的 iPhone 真机音频结果见 [验收记录](iphone-acceptance.md)，两种手机的完整验收仍在 CP6。
 
 配置密钥后可选择执行 `.venv/bin/python scripts/verify_gemini.py`，验证云端建连、PCM 输入和音频输出（产生 API 用量，不拨号）；`AGENTCALL_GEMINI_MODEL` 可覆盖模型。未执行此命令时，不得将本地协议测试当作真实 API 通过。
