@@ -1,0 +1,13 @@
+# Merge this hostname rule BEFORE the existing catch-all rule.
+# Preserve the existing tunnel ID, credentials path and other hostname rules.
+# Fill in both Access identifiers before deploying; never remove required: true.
+ingress:
+  - hostname: agenticcall.coldt.uk
+    service: http://127.0.0.1:8766
+    originRequest:
+      access:
+        required: true
+        teamName: REPLACE_WITH_ACCESS_TEAM_NAME
+        audTag:
+          - REPLACE_WITH_APPLICATION_AUD
+  - service: http_status:404

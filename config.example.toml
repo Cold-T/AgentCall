@@ -1,6 +1,8 @@
 [service]
 host = "127.0.0.1"
 port = 8765
+# Set to "/api" behind deploy/agentcall.nginx.conf; keep local routes unchanged.
+root_path = ""
 adapter = "hci0"
 # Start with CVSD for acceptance. mSBC requires libsbc and transparent SCO support.
 codec = "cvsd"

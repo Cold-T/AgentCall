@@ -26,7 +26,14 @@ def options(
 
 def headers():
     token = os.environ.get("AGENTCALL_TOKEN")
-    return {"Authorization": f"Bearer {token}"} if token else {}
+    result = {"Authorization": f"Bearer {token}"} if token else {}
+    client_id = os.environ.get("CF_ACCESS_CLIENT_ID")
+    client_secret = os.environ.get("CF_ACCESS_CLIENT_SECRET")
+    if bool(client_id) != bool(client_secret):
+        emit_error("CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET must be configured together")
+    if client_id and client_secret:
+        result.update({"CF-Access-Client-Id": client_id, "CF-Access-Client-Secret": client_secret})
+    return result
 
 
 def emit_error(detail, status=None):

@@ -10,6 +10,7 @@ from agentcall.tasks.models import ProviderConfig
 class Config:
     host: str = "127.0.0.1"
     port: int = 8765
+    root_path: str = ""
     adapter: str = "hci0"
     codec: str = "cvsd"
     obex_bus: str = "session"
@@ -36,6 +37,14 @@ class Config:
             raise ValueError("codec must be cvsd or msbc")
         if config.obex_bus not in ("session", "system"):
             raise ValueError("obex_bus must be session or system")
+        if config.root_path and (
+            not config.root_path.startswith("/")
+            or config.root_path.endswith("/")
+            or "//" in config.root_path
+            or "?" in config.root_path
+            or "#" in config.root_path
+        ):
+            raise ValueError("root_path must be empty or an absolute path without a trailing slash")
         if config.host not in ("127.0.0.1", "localhost", "::1") and not config.token:
             raise ValueError("non-loopback binding requires a Bearer token environment variable")
         for name in (

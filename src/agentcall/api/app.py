@@ -71,6 +71,7 @@ def create_app(config=None, backend=None, task_manager=None):
     app = FastAPI(
         title="AgentCall service",
         version="0.1.0",
+        root_path=config.root_path,
         lifespan=lifespan,
         description="Headless phone calls and AI tasks. Bearer authentication is required when configured. "
         "AT acceptance and model completion are separate from actual phone state.",
