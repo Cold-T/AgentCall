@@ -15,15 +15,17 @@ from agentcall.service.config import Config
 from agentcall.storage.store import Store
 
 
-async def test_real_http_sse_and_full_duplex_websocket(monkeypatch):
+@pytest.mark.parametrize("pin_auth", [False, True])
+async def test_real_http_sse_and_full_duplex_websocket(monkeypatch, pin_auth):
     store = Store(":memory:")
-    backend = Backend(Config(), store)
+    backend = Backend(Config(pin_auth=pin_auth, root_path="/api" if pin_auth else ""), store)
 
     async def start():
         backend.running = True
 
     monkeypatch.setattr(backend, "start", start)
-    monkeypatch.setenv("AGENTCALL_TOKEN", "network-test")
+    token = "123456" if pin_auth else "network-test"
+    monkeypatch.setenv("AGENTCALL_TOKEN", token)
     call_id = store.new_call(DEVICE, "123", "outgoing", "active")
     backend.current[DEVICE] = call_id
     host, peer = socket.socketpair(type=socket.SOCK_SEQPACKET)
@@ -35,7 +37,7 @@ async def test_real_http_sse_and_full_duplex_websocket(monkeypatch):
     port = listener.getsockname()[1]
     server = uvicorn.Server(uvicorn.Config(app, log_level="error", lifespan="on"))
     serving = asyncio.create_task(server.serve(sockets=[listener]))
-    headers = {"Authorization": "Bearer network-test"}
+    headers = {"Authorization": f"Bearer {token}"}
     try:
         for _ in range(100):
             if server.started:
@@ -59,7 +61,8 @@ async def test_real_http_sse_and_full_duplex_websocket(monkeypatch):
                     if line.startswith("data: ") and "verification.probe" in line:
                         assert json.loads(line[6:])["value"] == 42
                         break
-            uri = f"ws://127.0.0.1:{port}/calls/{call_id}/audio"
+            prefix = "/api" if pin_auth else ""
+            uri = f"ws://127.0.0.1:{port}{prefix}/calls/{call_id}/audio"
             with pytest.raises(websockets.exceptions.InvalidStatus):
                 async with websockets.connect(uri):
                     pass

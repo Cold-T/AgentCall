@@ -7,6 +7,7 @@ Type=simple
 WorkingDirectory=%h/AgentCall
 ExecStart=%h/AgentCall/.venv/bin/agentcall-service --config %h/.config/agentcall/config.toml
 EnvironmentFile=-%h/.config/agentcall/environment
+EnvironmentFile=-%h/.config/agentcall/pin.env
 Restart=on-failure
 RestartSec=5
 UMask=0077

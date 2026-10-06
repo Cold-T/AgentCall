@@ -10,11 +10,13 @@ from agentcall.tasks.models import ProviderConfig
 class Config:
     host: str = "127.0.0.1"
     port: int = 8765
+    root_path: str = ""
     adapter: str = "hci0"
     codec: str = "cvsd"
     obex_bus: str = "session"
     database: str = "~/.local/share/agentcall/agentcall.sqlite3"
     token_env: str = "AGENTCALL_TOKEN"
+    pin_auth: bool = False
     reconnect_seconds: float = 5
     api_key_env: str = "OPENAI_API_KEY"
     gemini_api_key_env: str = "GEMINI_API_KEY"
@@ -36,6 +38,20 @@ class Config:
             raise ValueError("codec must be cvsd or msbc")
         if config.obex_bus not in ("session", "system"):
             raise ValueError("obex_bus must be session or system")
+        if config.pin_auth and (
+            not config.token.isascii()
+            or not config.token.isdigit()
+            or not 6 <= len(config.token) <= 12
+        ):
+            raise ValueError("pin_auth requires a configured 6-12 digit PIN in token_env")
+        if config.root_path and (
+            not config.root_path.startswith("/")
+            or config.root_path.endswith("/")
+            or "//" in config.root_path
+            or "?" in config.root_path
+            or "#" in config.root_path
+        ):
+            raise ValueError("root_path must be empty or an absolute path without a trailing slash")
         if config.host not in ("127.0.0.1", "localhost", "::1") and not config.token:
             raise ValueError("non-loopback binding requires a Bearer token environment variable")
         for name in (

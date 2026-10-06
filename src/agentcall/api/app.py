@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import binascii
 import hmac
 import json
 from contextlib import asynccontextmanager, suppress
@@ -6,10 +8,11 @@ from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Header, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, StreamingResponse
-from fastapi.security import HTTPBearer
+from fastapi.security import HTTPBasic, HTTPBearer
 from pydantic import BaseModel, Field
 from starlette.requests import HTTPConnection
 
+from agentcall.api.auth import FailedAuthLimiter
 from agentcall.bluetooth.hfp import HFPError
 from agentcall.service.backend import Backend
 from agentcall.service.config import Config
@@ -46,12 +49,43 @@ class ConnectionBearer(HTTPBearer):
         return await super().__call__(request)
 
 
-def authorized(header, token):
-    return not token or hmac.compare_digest((header or "").encode(), f"Bearer {token}".encode())
+class ConnectionBasic(HTTPBasic):
+    async def __call__(self, request: HTTPConnection):
+        return await super().__call__(request)
+
+
+def authorized(header, token, pin_auth=False):
+    if not token:
+        return not pin_auth
+    if hmac.compare_digest((header or "").encode(), f"Bearer {token}".encode()):
+        return True
+    if pin_auth and (header or "").startswith("Basic "):
+        try:
+            credentials = base64.b64decode(header[6:], validate=True).decode("utf-8")
+            username, password = credentials.split(":", 1)
+            return username == "pin" and hmac.compare_digest(password.encode(), token.encode())
+        except (ValueError, binascii.Error):
+            return False
+    return False
 
 
 def create_app(config=None, backend=None, task_manager=None):
     config = config or Config()
+    if config.pin_auth and not config.token:
+        raise ValueError("pin_auth requires a configured PIN")
+    limiter = FailedAuthLimiter()
+
+    def check_auth(connection):
+        key = connection.client.host if connection.client else "unknown"
+        retry = limiter.retry_after(key) if config.pin_auth else 0
+        if retry:
+            return 429, retry
+        if authorized(connection.headers.get("authorization"), config.token, config.pin_auth):
+            return 200, 0
+        if config.pin_auth:
+            limiter.failed(key)
+        return 401, 0
+
     owned_store = backend is None
     backend = backend or Backend(config, Store(config.database))
     task_manager = task_manager or TaskManager(backend, config)
@@ -71,21 +105,40 @@ def create_app(config=None, backend=None, task_manager=None):
     app = FastAPI(
         title="AgentCall service",
         version="0.1.0",
+        root_path=config.root_path,
         lifespan=lifespan,
         description="Headless phone calls and AI tasks. Bearer authentication is required when configured. "
         "AT acceptance and model completion are separate from actual phone state.",
-        dependencies=[Depends(ConnectionBearer(auto_error=False, scheme_name="BearerAuth"))],
+        dependencies=[Depends(ConnectionBearer(auto_error=False, scheme_name="BearerAuth"))]
+        + (
+            [Depends(ConnectionBasic(auto_error=False, scheme_name="PinBasic"))]
+            if config.pin_auth
+            else []
+        ),
     )
     app.state.backend = backend
     app.state.tasks = task_manager
 
     @app.middleware("http")
     async def auth(request: Request, call_next):
-        if not authorized(request.headers.get("authorization"), config.token):
+        status, retry = check_auth(request)
+        if status != 200:
             return JSONResponse(
-                {"detail": "Bearer token required"},
-                status_code=401,
-                headers={"WWW-Authenticate": "Bearer"},
+                {
+                    "detail": "Too many authentication failures"
+                    if retry
+                    else "Authentication required"
+                    if config.pin_auth
+                    else "Bearer token required"
+                },
+                status_code=status,
+                headers={"Retry-After": str(retry)}
+                if retry
+                else {
+                    "WWW-Authenticate": 'Basic realm="AgentCall PIN", charset="UTF-8"'
+                    if config.pin_auth
+                    else "Bearer"
+                },
             )
         return await call_next(request)
 
@@ -348,7 +401,7 @@ def create_app(config=None, backend=None, task_manager=None):
 
     @app.websocket("/calls/{call_id}/audio")
     async def audio_socket(websocket: WebSocket, call_id: str):
-        if not authorized(websocket.headers.get("authorization"), config.token):
+        if check_auth(websocket)[0] != 200:
             await websocket.close(code=1008)
             return
         try:

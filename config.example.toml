@@ -1,6 +1,8 @@
 [service]
 host = "127.0.0.1"
 port = 8765
+# Set to "/api" behind deploy/agentcall.nginx.conf; keep local routes unchanged.
+root_path = ""
 adapter = "hci0"
 # Start with CVSD for acceptance. mSBC requires libsbc and transparent SCO support.
 codec = "cvsd"
@@ -8,6 +10,8 @@ codec = "cvsd"
 obex_bus = "session"
 database = "~/.local/share/agentcall/agentcall.sqlite3"
 token_env = "AGENTCALL_TOKEN"
+# Fixed PIN mode: requires 6-12 digits, supports Bearer and Basic user "pin".
+pin_auth = false
 reconnect_seconds = 5
 api_key_env = "OPENAI_API_KEY"
 gemini_api_key_env = "GEMINI_API_KEY"
