@@ -45,3 +45,15 @@ phone --json task show TASK_ID
 模型事件读取不再等待电话按实时速度播放。播放队列同时限制为最多 4096 个条目和 60 秒模型 PCM；超限明确结束任务，不通过阻塞事件读取等待队列腾空。API 的插话事件会停止当前 CVSD 包之后的发送，或等待当前完整 mSBC 帧边界再停止；输入方向始终保留。被打断回复的迟到音频及工具调用被丢弃，尚未真正执行的正常挂断被取消。正常未被打断的结束语仍完整发送后才挂断。
 
 `task.audio_interrupted` 记录播放中断；被打断回复的后续转写带 `interrupted=true`，这份完整转写可能包含未播放内容，不能据此声称对方听到了全部文字。参考：[OpenAI WebSocket 插话与截断](https://developers.openai.com/api/docs/guides/realtime-conversations#interruption-and-truncation)。
+
+### 噪声触发与检测阈值
+
+2026-10-06 的电话配置采用 `server_vad`、`threshold: 0.6` 和 `noise_reduction: {type: "near_field"}`，保留 `prefix_padding_ms: 300`、`silence_duration_ms: 500`、自动回复及插话中断。`config.example.toml` 包含相同配置；未提供覆盖参数时，provider 实现仍使用 `semantic_vad`。这是针对静音误触发的小幅调整起点，尚未通过真实电话校准。
+
+[官方 VAD 文档](https://developers.openai.com/api/docs/guides/realtime-vad)说明 `server_vad` 的阈值范围是 0–1，较高值需要更响的输入才能触发。[API 参数参考](https://developers.openai.com/api/reference/resources/realtime/client-events)给出的默认阈值是 0.5，并说明降噪在 VAD 和模型之前处理输入，有助于减少误触发。`near_field` 面向近距离麦克风；免提或远距离麦克风可尝试 `far_field`。该阈值不是 dB，也不存在适合所有电话环境的固定最优值。
+
+建议从 0.6 开始真实电话复测；安静时仍触发可按 0.05 步长提高到 0.65，轻声说话或插话漏检则降至 0.55。这些数值是本项目的调参起点，并非官方推荐值。若误触发主要随助手播放出现，应检查回声或音频串入，不能仅靠继续提高阈值。`semantic_vad` 的 `eagerness` 控制判断说完后的等待策略，不提供 `threshold`，不能用它替代噪声阈值。
+
+通过认证的 `PUT /settings` 保存默认 provider 的 `options` 后，无需重启即可影响新建任务，重启后也会保留。网页重新加载以读取新参数；已保存任务固定使用创建时的配置，应新建任务复测。API 显式覆盖 `turn_detection` 或 `noise_reduction` 时使用调用者的值。
+
+本次验证了本地及公网设置读回、持久配置重载和生成的 OpenAI 会话参数；没有调用真实模型或拨打电话。

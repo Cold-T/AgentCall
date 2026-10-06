@@ -27,3 +27,16 @@ voice = "marin"
 language = "中文"
 # Optional: options.transcription = { model = "gpt-4o-mini-transcribe" }
 # Input turn detection and interruption are handled by the API.
+
+# Starting point for phone audio with false speech triggers; tune per environment.
+# Without these overrides, the provider implementation uses semantic_vad.
+[provider.options.turn_detection]
+type = "server_vad"
+threshold = 0.6
+prefix_padding_ms = 300
+silence_duration_ms = 500
+create_response = true
+interrupt_response = true
+
+[provider.options.noise_reduction]
+type = "near_field"
