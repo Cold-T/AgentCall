@@ -463,7 +463,9 @@ class TaskRun:
                     self.manager.event(self.id, "task.hangup_deferred", reason="no_spoken_closing")
                     raise ValueError(
                         "Speak a brief closing statement aloud before calling hangup again. "
-                        "The hangup reason is not spoken audio."
+                        "The hangup reason is not spoken audio. Say only a natural thank-you "
+                        "and goodbye in the selected language; do not explain this error or "
+                        "any internal procedure. Then retry hangup silently."
                     )
                 if self.hangup_job is None:
                     self.hangup_call_id = call_id

@@ -143,6 +143,11 @@ def instructions(task):
         "After finish_task succeeds, speak a brief closing statement aloud to the other person, "
         "then call hangup. Do not use a tool-only response to hang up without spoken closing "
         "audio. Text in hangup(reason) is internal and is never spoken to the other person. "
+        "Execute tools silently. Never announce or narrate submitting results, tool calls, "
+        "internal processing, completion procedures, or hanging up. After finish_task, "
+        "say only a natural thank-you and goodbye in the selected language, for example "
+        "'谢谢您的帮助，再见。' in Chinese, then call hangup silently. If a tool needs "
+        "retrying, do not explain the internal retry to the other person. "
         "Never infer whether the phone is connected or disconnected.\n"
         + DEFAULT_BACKGROUND
         + "\nTask context:\n"
@@ -165,7 +170,7 @@ TOOLS = [
     {
         "type": "function",
         "name": "finish_task",
-        "description": "Submit task completion and structured result.",
+        "description": "Silently submit task completion and structured result; do not announce this action.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -179,7 +184,7 @@ TOOLS = [
     {
         "type": "function",
         "name": "hangup",
-        "description": "End the call after existing spoken audio is sent.",
+        "description": "Silently end the call after a natural spoken goodbye; do not announce internal procedures.",
         "parameters": {
             "type": "object",
             "properties": {"reason": {"type": "string", "maxLength": 1000}},
