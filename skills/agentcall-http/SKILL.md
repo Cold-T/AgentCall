@@ -1,168 +1,67 @@
 ---
 name: agentcall-http
-description: Create, start, monitor, and retrieve AgentCall AI phone-call tasks through its authenticated HTTP API. Use when asked to discover or connect a Bluetooth phone through AgentCall, make an AI-assisted phone call, or manage an existing AgentCall task over HTTP.
+description: Operate AgentCall AI phone-call tasks through its authenticated HTTP API. Use to discover or connect a Bluetooth phone, make an AI-assisted call, or retrieve and manage AgentCall tasks.
 ---
 
-# AgentCall HTTP task skill
+# AgentCall HTTP
 
-Use this skill to operate AgentCall's AI task-call feature over HTTP. The service controls a paired phone through Bluetooth and connects a configured OpenAI or Gemini realtime model to the call.
+Use the HTTP API for phone operations and tests; do not substitute direct Bluetooth or system commands.
 
-## Authorization and safety
+## Authentication
 
-- A task start can place a real phone call. Start one only when the user has clearly asked you to make that call. Creating a task with `start_immediately: false` only saves it; it does not dial.
-- Before starting, make sure the user provided or approved the target phone/contact, the purpose, and the information the caller may share. Do not invent facts or contact someone for a materially different purpose.
-- Do not retry a task by creating another one just because a request timed out. First retrieve its status; use the same idempotency key when repeating a start request.
-- Keep the AgentCall PIN/token and all model credentials secret. Never put credentials in task JSON, URL query parameters, logs, or the conversation. Model API keys belong in the AgentCall service environment.
-- A task's outcome, model-reported result, and the phone's actual call state are separate. Report each from the API; do not claim the call ended based only on a model result.
+Use the configured base URL and credential from the environment or an approved secret store. Public gateways use HTTPS with `/api`; local installations commonly use `http://127.0.0.1:8765`. Include the prefix exactly once.
 
-## Connection and authentication
+The configured four-digit PIN is the API token; no login or token exchange is required. Send `Authorization: Bearer <PIN>` or Basic authentication with username `pin` and the PIN as password. Treat the PIN as a string to preserve leading zeroes. Keep credentials out of task bodies, URLs, logs and messages; model API keys remain service-side.
 
-Use the configured service URL and credential from the caller's environment or approved secret store. Do not guess credentials. Local installations commonly use `http://127.0.0.1:8765`; installations behind the public gateway use the `/api` prefix and HTTPS.
+Use authenticated `GET /openapi.json` or `/docs` for fields not covered here. `401` means authentication failed; `429` requires respecting `Retry-After`; `409` means a state conflict; `422` means invalid input; `503` means Bluetooth/contact-sync availability; `504` means timeout. Do not blindly repeat a mutation after a timeout.
 
-```sh
-export AGENTCALL_URL='http://127.0.0.1:8765'  # or https://host.example/api
-# AGENTCALL_TOKEN must be provided securely by the environment.
-curl --fail-with-body --silent --show-error \
-  -H "Authorization: Bearer ${AGENTCALL_TOKEN}" \
-  "${AGENTCALL_URL}/health"
-```
+## Discover and connect
 
-The configured 4-digit PIN is the API token itself; no login or token-exchange step is required for API clients. The configured PIN can be sent as a Bearer credential. HTTP Basic authentication with username `pin` and the PIN as password is also supported, for example `curl -u "pin:${AGENTCALL_TOKEN}"`. Preserve leading zeroes by treating PINs as strings. If the service uses a root path such as `/api`, include it in `AGENTCALL_URL` exactly once. Use `/docs` or `/openapi.json` under that base URL when you need the live schema.
+- `GET /health` checks service readiness. `GET /devices` lists known devices; it does **not** scan. `/devices/saved` is historical, not live discovery. Use identifiers returned by the API.
+- To search, enable Bluetooth and open the phone's pairing screen, then `POST /discovery/start`. Discovery is asynchronous: `accepted: true` confirms scan startup only. Wait briefly and check `/devices` as needed for up to 30 seconds. Stop with `POST /discovery/stop` when finished, including after errors; this also stops the webpage's shared scan. An immediate empty list is not a completed search. Do not require the user to start scanning on the webpage.
+- Pair an unpaired target with `POST /devices/{device}/pair`. `GET /pairing` exposes pending `requests` with `id`, `device` and, when available, `passkey`. Only after the user verifies the phone's matching code, accept using `POST /pairing/{id}` with `{"accept":true}`; never auto-accept.
+- For phone-initiated pairing, use `POST /discoverability/start` instead of scanning. The phone can select the host's Bluetooth name during its 180-second window. Handle confirmations as above and finish with `POST /discoverability/stop`.
+- Connect with `POST /devices/{device}/connect`; check `/devices/{device}` for `hfp_ready: true` before dialing. `paired` or `connected` alone is insufficient. Connecting does not authorize a call.
+- Disconnect with `POST /devices/{device}/disconnect`. When explicitly asked to forget a phone, use `/unpair`; it retains contacts and history. Do not hang up to bypass an active-call `409`. To repair stale pairing, the user must also forget the host on the phone before pairing again.
 
-Common failures: `401` means authentication failed; `429` means authentication rate limiting and includes `Retry-After`; `422` means request schema/field validation failed; `409` indicates a phone/task/AT-command state conflict; `503` indicates Bluetooth or PBAP availability; `504` indicates a timeout. Do not repeat a mutating request blindly after a timeout.
+## Create and start a call
 
-## Discover and connect a phone
+Start a real call only when the user has authorized its target, purpose and information to share. Saving a task alone does not dial. A new task after a failed or ended attempt is another call and requires authorization; do not automatically redial.
 
-`GET /devices` lists devices already known to BlueZ; it does **not** start Bluetooth discovery. `GET /devices/saved` is persisted history, not a live scan. Do not report that a new phone cannot be found after only listing devices.
+1. Check service readiness and the selected phone's `hfp_ready`.
+2. Resolve the recipient with `GET /contacts?q=...&device=...` if needed. A returned contact's **`id`** goes in the task's **`contact_id`**. Resolve ambiguous names/numbers rather than guessing. `POST /devices/{device}/sync` refreshes phone contacts when needed.
+3. `POST /tasks` creates a task (`201`, returned `id`). Supply `device`, `goal`, and exactly one of `number` or `contact_id`. Optional fields:
 
-When the user asks to search for a new device, or the requested phone is missing:
+   | Field | Behavior |
+   | --- | --- |
+   | `information` | Object containing relevant, truthful facts the caller may use. |
+   | `background` | Omit to inherit the permanent call instructions. An explicit value replaces them, including an empty string. Override only when requested; do not copy the default instructions into every task or add internal-process narration. |
+   | `completion_criteria` | Omitted or blank uses `goal`, matching the webpage. |
+   | `result_schema` | JSON Schema for structured output; defaults to an object. References must be local fragments. |
+   | `config` | Optional `provider` (`openai`/`gemini`), `model`, `voice`, `language`, `options`. Omit unspecified overrides to inherit saved settings; inspect `GET /settings` if needed. Transcription is enabled by default. |
+   | `max_call_seconds` | Positive duration up to 3600; omission inherits the saved default (initially 300 seconds). |
+   | `start_immediately` | Defaults to `false`; use `true` only for an authorized call now. |
 
-1. Check `GET /health`. Have the phone's Bluetooth enabled and its Bluetooth settings/pairing screen open so it is discoverable.
-2. Call `POST /discovery/start` using the same authenticated API base URL. This is the same operation as the web “搜索设备” button. `accepted: true` means scanning started, not that discovery is complete.
-3. Poll `GET /devices` every 2 seconds for up to 30 seconds, stopping early when the requested device appears. Use its returned `id` or `address`; do not guess the identifier. If no particular target was specified, report the discovered names/addresses for selection; do not automatically pair every result. Discovery is asynchronous, so an immediate empty list is not a final scan result.
-4. Call `POST /discovery/stop` when this search finishes, including on timeout or error after successfully starting it. Scanning is shared with the webpage; stopping it also stops the webpage's scan. Do not repeatedly start discovery while polling. If start fails, report the API error instead of treating a cached device list as a successful search.
-5. If the user requested connection, pair an unpaired phone with `POST /devices/{device}/pair`. Retrieve `GET /pairing` for pending confirmations, and accept through `POST /pairing/{request_id}` with `{"accept":true}` only after the user has checked the phone's matching value. Then call `POST /devices/{device}/connect` and poll device status to confirm `hfp_ready: true`. `paired` or `connected` alone does not prove call readiness. Connecting a phone does not authorize placing a call.
+4. For a saved task, `POST /tasks/{id}/start` with a stable `Idempotency-Key`. `202` means queued, not connected. If the response is uncertain, retrieve the existing task and repeat only the same start with the same key; do not create a replacement task.
 
-If a scan times out, report that the phone was not discovered within the scan window and suggest keeping the phone's Bluetooth pairing screen open before another requested scan. Never require the user to start discovery from the webpage first.
+Web-selected duration, model and voice are shared service defaults. API overrides affect only that task; saved tasks retain their resolved configuration.
 
-Example scan start and list (wait and poll as described above, then stop):
+## Status, results and controls
 
-```sh
-curl --fail-with-body --silent --show-error -X POST \
-  -H "Authorization: Bearer ${AGENTCALL_TOKEN}" \
-  "${AGENTCALL_URL}/discovery/start"
+Read status when needed to answer the user or obtain the requested result. Do not continuously poll by default; respect requests to stop monitoring. Stopping monitoring does not cancel the call.
 
-curl --fail-with-body --silent --show-error \
-  -H "Authorization: Bearer ${AGENTCALL_TOKEN}" \
-  "${AGENTCALL_URL}/devices"
+- `GET /tasks/{id}` gives task state; `GET /tasks/{id}/result` gives `outcome`, `model_result`, `error` and linked `call`. Distinguish execution outcome from the model's `completed`/`partial`/`incomplete` assessment and the phone-observed call state. A queued response, model completion or task `ended` alone does not prove the phone hung up or the recipient heard the AI.
+- Verify actual phone state with `GET /calls/{call_id}` or `/calls/current` when relevant. Report unavailable evidence rather than inferring success.
+- `GET /tasks/{id}/events?after_id=0&limit=100` returns ordered transcript/tool/status events. Paginate with the last ID as the next exclusive `after_id`; optional `kind` filters events. `/tasks/{id}/tools` gives tool calls and results.
+- `GET /tasks` accepts `state`, `device`, `outcome`, `limit` and `offset`. Page as needed; do not assume the first page is complete or newest first.
+- `POST /tasks/{id}/context` with `{"text":"..."}` adds relevant facts to an active conversation.
+- `POST /tasks/{id}/cancel` requests cancellation: queued tasks do not dial; running cleanup and hangup are asynchronous. Verify task and phone state afterward.
 
-curl --fail-with-body --silent --show-error -X POST \
-  -H "Authorization: Bearer ${AGENTCALL_TOKEN}" \
-  "${AGENTCALL_URL}/discovery/stop"
-```
+## Summaries and downloads
 
-For a phone-initiated pairing request, use `POST /discoverability/start` instead of scanning. This opens a 180-second discoverable/pairable window and selects AgentCall as BlueZ's default confirmation agent. Have the user select the host's Bluetooth name (currently `zeroclaw`) on the phone. Poll `GET /pairing`; `requests` includes each request's `id`, `device`, and `passkey` when supplied. Wait for the user to verify the matching code before accepting through `POST /pairing/{id}`. Never auto-accept. Use `POST /discoverability/stop` when finished. Outside this window, incoming requests are rejected unless pairing was explicitly initiated through the device API. A successful pairing still needs device status verification (`hfp_ready`) before placing a call. If the phone reports an invalid old pairing, have the user forget the host on the phone before pairing again; do not erase other devices' bonds.
+- `GET /tasks/{id}` includes cached `summary` and `downloads.transcript` / `downloads.recording` availability.
+- After the task ends, `POST /tasks/{id}/summary` generates or returns its cached GPT-5.6 Luna summary when requested. Generation uses the service key and incurs model usage. Retry a failed summary with `?retry=true` only intentionally, not in a loop.
+- `GET /tasks/{id}/transcript` downloads UTF-8 TXT; `404` means unavailable.
+- `GET /tasks/{id}/recording` downloads stereo WAV after task end (left: recipient input; right: AI audio sent to the phone). `409` means still running; `404` means unavailable. Missing historical transcripts/recordings cannot be recovered retroactively.
 
-To forget a specific phone when requested, call `POST /devices/{device}/unpair`. This removes its Bluetooth bond and reconnect intent but retains recorded history and contacts. An active call or task returns 409; do not automatically hang up to bypass that conflict. The phone must also forget its old host bond before re-pairing.
-
-## Make a task call
-
-1. Check readiness (`GET /health`) and list devices (`GET /devices`). If the requested phone is missing, use the discovery flow above; listing alone does not scan. Verify the selected phone reports `hfp_ready: true` before starting a call. Use a device identifier returned by the service. A device can be a Bluetooth MAC such as `AA:BB:CC:DD:EE:FF` or the supported `dev_AA_BB_CC_DD_EE_FF` form.
-2. If needed, find a contact with `GET /contacts?q=...` and use its `contact_id`. Do not assume a contact is current unless the service reports it.
-3. Build a task using exactly one of `number` or `contact_id`. The task fields are:
-   - `device` (required): target paired phone.
-   - `number` or `contact_id` (exactly one): call target.
-   - `goal` (required): what the model should accomplish.
-   - `background` (optional): the call instructions for this task. Omit it to use the full default AI-assistant calling instructions. An explicit value replaces those instructions, including an empty string to clear them. The web form prefills the same default and permits editing for each call.
-   - `information`: optional truthful facts the caller may use.
-   - `completion_criteria` (optional): defaults to `goal` when omitted or blank, matching the web UI. Omit it unless the user requests a more specific success criterion.
-   - `result_schema`: JSON Schema for the structured result; references must be local fragments.
-   - `config`: optional `provider` (`openai` or `gemini`), `model`, `voice`, `language`, and provider `options`. Omit it to inherit current service defaults; inspect `GET /settings` if needed. Both providers enable conversation transcription by default; do not add options solely to enable it. Credentials and model endpoints are service-side only.
-   - `max_call_seconds`: optional, 1–3600; omission inherits the service’s saved `default_max_call_seconds` (initially 300). The web duration, model and voice selections are saved as service defaults. An explicit API task override affects that task only.
-   - `start_immediately`: leave `false` unless the user explicitly authorized calling now.
-4. Create it with `POST /tasks`. A `201` response includes the task record and its `id`.
-5. When authorized, start with `POST /tasks/{id}/start`, sending a stable `Idempotency-Key`. The response is `202`: this means accepted/queued, not that the call connected.
-6. Poll `GET /tasks/{id}` or `GET /tasks/{id}/result` until the task is ended. Fetch `GET /tasks/{id}/events` for the ordered transcript/tool/status events. Use `GET /calls/{call_id}` to verify the actual phone call details when a `call_id` is present.
-
-Example request body (replace all example identifiers and text with user-provided values):
-
-```json
-{
-  "device": "AA:BB:CC:DD:EE:FF",
-  "number": "+15551234567",
-  "goal": "Ask whether the office is open tomorrow and what its hours are.",
-  "information": {},
-  "result_schema": {
-    "type": "object",
-    "properties": {
-      "opening_time": {"type": "string"},
-      "closing_time": {"type": "string"},
-      "notes": {"type": "string"}
-    },
-    "required": ["opening_time", "closing_time", "notes"],
-    "additionalProperties": false
-  },
-  "config": {"provider": "openai", "language": "English"},
-  "max_call_seconds": 300,
-  "start_immediately": false
-}
-```
-
-Example create, start, and result requests:
-
-```sh
-curl --fail-with-body --silent --show-error \
-  -H "Authorization: Bearer ${AGENTCALL_TOKEN}" \
-  -H 'Content-Type: application/json' \
-  --data @task.json \
-  "${AGENTCALL_URL}/tasks"
-
-# Use the returned task ID; only do this after authorization to place the call.
-curl --fail-with-body --silent --show-error -X POST \
-  -H "Authorization: Bearer ${AGENTCALL_TOKEN}" \
-  -H 'Idempotency-Key: agentcall-<unique-stable-key>' \
-  "${AGENTCALL_URL}/tasks/<task-id>/start"
-
-curl --fail-with-body --silent --show-error \
-  -H "Authorization: Bearer ${AGENTCALL_TOKEN}" \
-  "${AGENTCALL_URL}/tasks/<task-id>/result"
-```
-
-Task states progress through `saved → queued → preparing → dialing → in_call → finalizing → ended`. Start is idempotent: retry the same task with the same key after an uncertain response. A task that has ended cannot be restarted; a new task is a new call and requires authorization. The phone queue serializes tasks per device, and conflicts may return `409`.
-
-The default call instructions make the AI introduce itself as a delegated assistant, talk directly to the recipient, ask one main question at a time, avoid reading internal task/context text, avoid invented facts or unauthorized commitments, use `send_dtmf` for phone menus, and submit a truthful structured result with `finish_task`. After completing the task it must confirm key facts, thank the recipient, finish speaking its closing, then call `hangup`. Do not copy these instructions into each task request; supply the call goal and relevant facts only. Never add closing-process narration to a task goal or background. The model must not say “我把情况整理一下，再结束通话” or equivalent promises to organize, record, submit, or process information before ending the call. These are silent internal actions; only necessary fact confirmation and a brief natural thank-you/goodbye should be spoken.
-
-The API still defaults to saving a task without dialing; the web call button explicitly starts it. Automatic recording and the one-second opening pause apply to API and web AI calls alike. Provider options, voices and speech speed are resolved when creating a task; already saved tasks retain their configuration.
-
-## Monitor, add context, cancel
-
-- `GET /tasks/{id}/events?after_id=0&limit=100` returns task events in ascending ID order. Pass the last event ID as the next `after_id` (exclusive cursor) to paginate. `kind` can filter events.
-- `GET /tasks/{id}/tools?limit=100&offset=0` returns model tool calls and their results.
-- `POST /tasks/{id}/context` with `{"text":"..."}` adds information to an active conversation only. Use it only for relevant, accurate context.
-- `POST /tasks/{id}/cancel` requests cancellation. A queued task ends without dialing; a running task is cleaned up asynchronously and hangup is requested. Retrieve the task and call records afterward to verify the phone state.
-- `GET /tasks` accepts filters such as `state`, `device`, and `outcome`, plus `limit` and `offset`. Page through results rather than assuming the first response is complete.
-
-For live updates, `GET /events` is Server-Sent Events. It has no replay; on reconnect, query task/current state or use the persistent `/events/history` endpoint. If an SSE client receives `events.overflow`, reconnect and query current state.
-
-## Result interpretation
-
-Read `/tasks/{id}/result` and distinguish:
-
-- `outcome`: why AgentCall execution ended (for example completed, error, canceled, or timeout).
-- `model_result.status`: the model's `completed`, `partial`, or `incomplete` assessment and structured result.
-- `call.state`: phone-observed call state, which is authoritative for whether the phone is still in a call.
-- `error`: service/model/telephony failure details, when present.
-
-Summarize facts grounded in the result and events. Mark missing fields as unavailable instead of inferring them. A `202` start response, successful `finish_task`, or task `ended` state alone does not prove that the phone is idle.
-
-## Summary and downloads
-
-- `GET /tasks/{id}` includes cached `summary` and `downloads.transcript` / `downloads.recording` availability flags.
-- After the task ends, `POST /tasks/{id}/summary` generates or retrieves its cached GPT-5.6 Luna result summary. Use it when a model summary is requested; generation uses the service OpenAI API key and incurs model usage. A failed generation is returned with `status: failed`; use `?retry=true` only for an intentional retry, not an automatic loop.
-- `GET /tasks/{id}/transcript` downloads UTF-8 TXT; missing transcription returns 404. Old tasks without transcription cannot retroactively recover it.
-- `GET /tasks/{id}/recording` downloads stereo WAV after the task ends (left: recipient, right: AI audio sent to the phone). A running task returns 409; a missing recording returns 404. Old unrecorded calls and phone-synced history have no recording to recover.
-- Use the same authenticated API base URL for downloads. Keep call content and audio private; do not publish them or put credentials in links. Treat summaries as derived from records, not as proof that the phone hung up or the recipient heard all interrupted speech.
-
-## API reference
-
-Use the service's authenticated `GET /docs` or `GET /openapi.json` for the complete current schema. Project documentation: `docs/api.md`, `docs/tasks.md`, and `docs/gemini.md`.
+Use the same authenticated base for downloads. Keep call content private and never embed credentials in download links. Summaries are derived records, not proof of audio delivery or hangup.
