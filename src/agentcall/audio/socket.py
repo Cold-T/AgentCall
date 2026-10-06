@@ -45,10 +45,11 @@ def _sco_connect(
     timeout_sec: float = 2.0,
     voice_setting: int = _BT_VOICE_CVSD_16BIT,
     local_mac: str = "00:00:00:00:00:00",
+    raise_errors: bool = False,
 ) -> int:
     """
     Open and connect a BTPROTO_SCO socket via libc.
-    Returns raw fd on success, -1 on failure.
+    Returns raw fd on success, -1 on failure; raise_errors preserves OS error details.
 
     voice_setting controls what the kernel does with the SCO data:
       _BT_VOICE_CVSD_16BIT  (0x0060) — kernel converts CVSD↔16-bit PCM (CVSD calls)
@@ -57,49 +58,40 @@ def _sco_connect(
     Transparent mode failure is an error; the caller must not change codec
     without matching HFP negotiation.
     """
+    libc = None
+    fd = -1
     try:
         libc = _load_libc()
-
         fd = libc.socket(_AF_BLUETOOTH, _SOCK_SEQPACKET, _BTPROTO_SCO)
         if fd < 0:
-            return -1
-
-        # Set voice setting before bind/connect — determines kernel codec behaviour.
-        vs = _struct.pack("@H", voice_setting)  # uint16_t, native byte order
-        vs_buf = (_ct.c_char * len(vs))(*vs)
-        if libc.setsockopt(fd, _SOL_BLUETOOTH, _BT_VOICE, vs_buf, len(vs)) < 0:
-            err = _ct.get_errno()
-            libc.close(fd)
-            logger.debug(
-                "BT_VOICE setsockopt failed (voice=0x%04x, errno=%d) — "
-                "adapter may not support this mode",
-                voice_setting,
-                err,
-            )
-            return -1
-
-        # Bind to any local adapter
+            raise OSError(_ct.get_errno(), "SCO socket failed")
+        vs = _ct.c_uint16(voice_setting)
+        if libc.setsockopt(fd, _SOL_BLUETOOTH, _BT_VOICE, _ct.byref(vs), 2) < 0:
+            raise OSError(_ct.get_errno(), "SCO BT_VOICE failed")
         local = _sockaddr_sco(_AF_BLUETOOTH, _mac_to_bdaddr(local_mac))
         if libc.bind(fd, _ct.byref(local), _ct.sizeof(local)) < 0:
-            libc.close(fd)
-            return -1
-
-        # Set connect timeout.
-        # Use "@" (native byte order, native size) so timeval is the right
-        # size on both 64-bit (2×8 bytes) and 32-bit ARM/Pi (2×4 bytes).
-        tv = _struct.pack("@ll", int(timeout_sec), 0)
+            raise OSError(_ct.get_errno(), "SCO bind failed")
+        if timeout_sec <= 0:
+            raise ValueError("SCO connect timeout must be positive")
+        seconds = int(timeout_sec)
+        tv = _struct.pack("@ll", seconds, max(1, int((timeout_sec - seconds) * 1_000_000)))
         tv_buf = (_ct.c_char * len(tv))(*tv)
-        libc.setsockopt(fd, _SOL_SOCKET, _SO_SNDTIMEO, tv_buf, len(tv))
-
+        if libc.setsockopt(fd, _SOL_SOCKET, _SO_SNDTIMEO, tv_buf, len(tv)) < 0:
+            raise OSError(_ct.get_errno(), "SCO timeout setup failed")
         remote = _sockaddr_sco(_AF_BLUETOOTH, _mac_to_bdaddr(remote_mac))
         if libc.connect(fd, _ct.byref(remote), _ct.sizeof(remote)) < 0:
-            libc.close(fd)
-            return -1
-
-        return fd
-    except Exception as e:
-        logger.debug("_sco_connect exception: %s", e)
+            raise OSError(_ct.get_errno(), "SCO connect failed")
+        result = fd
+        fd = -1
+        return result
+    except Exception:
+        if raise_errors:
+            raise
+        logger.debug("SCO connector failed", exc_info=True)
         return -1
+    finally:
+        if fd >= 0 and libc is not None:
+            libc.close(fd)
 
 
 def sco_listen(local_mac, voice_setting):

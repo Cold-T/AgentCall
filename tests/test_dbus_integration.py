@@ -62,6 +62,8 @@ async def test_profile_registration_fd_handoff_and_pairing(monkeypatch):
         registration = next(m for m in calls if m.member == "RegisterProfile")
         assert registration.signature == "osa{sv}"
         assert registration.body[0] == PROFILE_PATH
+        assert registration.body[1] == "0000111e-0000-1000-8000-00805f9b34fb"
+        assert "Role" not in registration.body[2]
         assert registration.body[2]["RequireAuthentication"].value
         assert any(m.member == "RegisterAgent" for m in calls)
         assert (await backend.devices())[0]["hfp_ag"]

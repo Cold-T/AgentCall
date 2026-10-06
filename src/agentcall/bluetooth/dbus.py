@@ -161,7 +161,8 @@ class BlueZ:
                 HF_UUID,
                 {
                     "Name": Variant("s", "AgentCall"),
-                    "Role": Variant("s", "client"),
+                    # Keep BlueZ's default client + server support: client-only
+                    # disables the local HF SDP record and incoming RFCOMM listener.
                     "AutoConnect": Variant("b", True),
                     "RequireAuthentication": Variant("b", True),
                     "Version": Variant("q", 0x0107),

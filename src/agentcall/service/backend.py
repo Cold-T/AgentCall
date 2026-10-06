@@ -399,7 +399,18 @@ class Backend:
             remote = device.rsplit("dev_", 1)[1].replace("_", ":")
             sock = None
             # Accept phone-initiated audio first; retry outbound SCO for an active call.
-            for _ in range(20):
+            active_deadline = None
+            last_connect_error = None
+            while True:
+                if connection.state == "active" and active_deadline is None:
+                    active_deadline = (
+                        asyncio.get_running_loop().time() + self.config.audio_timeout_seconds
+                    )
+                if (
+                    active_deadline is not None
+                    and asyncio.get_running_loop().time() >= active_deadline
+                ):
+                    break
                 if connection.closed or device not in self.current:
                     return
                 try:
@@ -416,20 +427,34 @@ class Backend:
                     if connection.state == "active":
                         # Wait for the finite worker even on cancellation so its fd cannot leak.
                         task = asyncio.create_task(
-                            asyncio.to_thread(_sco_connect, remote, 1, voice, local)
+                            asyncio.to_thread(
+                                _sco_connect, remote, 1, voice, local, raise_errors=True
+                            )
                         )
                         try:
                             fd = await asyncio.shield(task)
                         except asyncio.CancelledError:
-                            fd = await task
-                            if fd >= 0:
-                                os.close(fd)
+                            try:
+                                fd = await task
+                                if fd >= 0:
+                                    os.close(fd)
+                            except OSError:
+                                pass
                             raise
+                        except OSError as exc:
+                            detail = {"errno": exc.errno, "error": str(exc)}
+                            if detail != last_connect_error:
+                                self.emit("audio.connect_failed", device=device, **detail)
+                            last_connect_error = detail
+                            continue
                         if fd >= 0:
                             sock = socket.socket(fileno=fd)
                             break
             if sock is None:
-                raise RuntimeError("SCO connection unavailable; check controller and HFP owner")
+                detail = (
+                    f"; last connector error: {last_connect_error}" if last_connect_error else ""
+                )
+                raise RuntimeError("SCO connection unavailable after phone answered" + detail)
             audio = SCOAudio(sock, codec)
             self.audio[device] = audio
             self.emit("audio.ready", device=device, **audio.status())
