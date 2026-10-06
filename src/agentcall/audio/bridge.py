@@ -95,7 +95,10 @@ class AudioBridge:
         if item is not None:
             item["tx_end"] = self.audio.tx_bytes
 
-    async def output_loop(self):
+    async def output_loop(self, *, start_delay=0):
+        # Gate playback once at call startup; input and provider events remain live.
+        if start_delay:
+            await asyncio.sleep(start_delay)
         while True:
             generation, key, pcm = await self.queue.get()
             try:

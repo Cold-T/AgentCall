@@ -298,7 +298,8 @@ class TaskRun:
             self.manager.state(self.id, "in_call")
             self.manager.event(self.id, "task.audio", **self.bridge.status())
             self.spawn(self.bridge.input_loop(), "audio_failed")
-            self.spawn(self.bridge.output_loop(), "audio_failed")
+            self.manager.event(self.id, "task.opening_pause", seconds=1.0)
+            self.spawn(self.bridge.output_loop(start_delay=1.0), "audio_failed")
             await self.provider.start_response()
             async with asyncio.timeout_at(self.call_deadline):
                 while True:

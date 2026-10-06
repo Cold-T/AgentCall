@@ -76,6 +76,7 @@ class Rig:
         self.model_messages = []
         self.model_sockets = []
         self.output = bytearray()
+        self.first_output_at = None
         self.jobs = []
         self.peers = []
         self.session_configs = []
@@ -235,6 +236,8 @@ class Rig:
         async def capture():
             try:
                 while data := await asyncio.get_running_loop().sock_recv(peer, 4096):
+                    if self.first_output_at is None:
+                        self.first_output_at = asyncio.get_running_loop().time()
                     self.output.extend(data)
             except OSError:
                 pass
@@ -475,6 +478,10 @@ async def completed(rig, task_id):
 
 async def test_complete_http_task_model_audio_tools_hangup_and_records(rig):
     task_id = await create_start(rig)
+    await wait_for(lambda: rig.store.task(task_id)["state"] == "in_call")
+    ready_at = asyncio.get_running_loop().time()
+    await asyncio.sleep(0.2)
+    assert not rig.output  # Even an immediately generated greeting cannot play early.
     result = await completed(rig, task_id)
     assert result["outcome"] == "completed", result
     assert result["model_result"]["result"] == {"answer": 42}
@@ -483,6 +490,7 @@ async def test_complete_http_task_model_audio_tools_hangup_and_records(rig):
     assert rig.phone.commands.count("ATD123;") == 1
     for digit in "12*#":
         assert rig.phone.commands.count("AT+VTS=" + digit) == 1
+    assert rig.first_output_at - ready_at >= 0.98
     assert rig.hangup_output_sizes == [4800]  # greeting + closing audio reaches SCO before CHUP
     audio_inputs = [
         e
