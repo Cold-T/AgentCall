@@ -34,6 +34,7 @@ class SCOAudio:
         self.write_lock = asyncio.Lock()
         self.playout_until = 0.0
         self.output_generation = 0
+        self.recorder = None
         log.info(
             "SCO ready: input/output=s16le mono %sHz codec=%s mtu=%s", self.rate, codec, self.mtu
         )
@@ -64,6 +65,8 @@ class SCOAudio:
                     pcm = self.decoder.decode(packet)
                     if pcm:
                         self.rx_bytes += len(pcm)
+                        if self.recorder:
+                            self.recorder.write(0, pcm)
                         return pcm
                     log.warning("mSBC decode failed; preserving negotiated codec")
             try:
@@ -76,6 +79,8 @@ class SCOAudio:
                 raise ConnectionError("SCO EOF")
             if self.codec == 1:
                 self.rx_bytes += len(data)
+                if self.recorder:
+                    self.recorder.write(0, data)
                 return data
             self.rx_buffer.extend(data)
         raise ConnectionError("SCO closed")
@@ -128,6 +133,8 @@ class SCOAudio:
                         await self.send_packet(part, len(part) / (self.rate * 2))
                         self.pending_bytes -= len(part)
                         self.tx_bytes += len(part)
+                        if self.recorder:
+                            self.recorder.write(1, part, output_end=self.playout_until)
                 else:
                     self.tx_buffer.extend(pcm)
                     self.pending_bytes = 0
@@ -143,6 +150,8 @@ class SCOAudio:
                                 0.0075 * len(packet[offset : offset + self.mtu]) / 60,
                             )
                         self.tx_bytes += len(frame)
+                        if self.recorder:
+                            self.recorder.write(1, frame, output_end=self.playout_until)
             finally:
                 self.pending_bytes = 0
 

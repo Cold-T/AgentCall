@@ -11,6 +11,9 @@ def now():
 
 class Store:
     def __init__(self, path):
+        self.recordings_dir = (
+            Path(path).expanduser().resolve().parent / "recordings" if path != ":memory:" else None
+        )
         if path != ":memory:":
             Path(path).expanduser().parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(str(Path(path).expanduser()) if path != ":memory:" else path)

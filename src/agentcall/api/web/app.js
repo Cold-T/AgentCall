@@ -173,6 +173,7 @@ async function currentCalls() {
   if (activeTask) {
     const task = await api('/tasks/' + enc(activeTask));
     $('#task-status').textContent = `本次任务：${status(task.state)}${task.outcome ? ' · ' + status(task.outcome) : ''}`;
+    $('#task-status').append(button('查看', async () => { await tab('history'); await historyDetail({task, source:'project'}); }));
     if (task.state !== 'ended') $('#task-status').append(button('取消任务', async () => {
       await api(`/tasks/${enc(activeTask)}/cancel`, 'POST'); notice('取消请求已提交'); await currentCalls();
     }));
@@ -197,6 +198,9 @@ async function historyDetail(row) {
   const request = ++detailRequest;
   $('#history-detail').hidden = false;
   $('#history-summary').replaceChildren();
+  $('#history-downloads').replaceChildren(); $('#recording-status').textContent = '';
+  $('#history-detail').focus({preventScroll:true});
+  $('#history-detail').scrollIntoView({behavior:'instant', block:'start'});
   $('#history-result').textContent = '正在读取…'; $('#history-transcript').textContent = '正在读取…';
   const task = row.task ? await api('/tasks/' + enc(row.task.id)) : null;
   const call = task?.call || (row.call ? await api(`/calls/${enc(row.call.id)}?source=${enc(row.source)}`) : null);
@@ -212,6 +216,15 @@ async function historyDetail(row) {
     }
   }
   if (request !== detailRequest) return;
+  if (task) {
+    for (const [kind, label, extension] of [['transcript','下载 Transcript','txt'], ['recording','下载录音','wav']]) {
+      if (!task.downloads?.[kind]) continue;
+      const link = document.createElement('a'); link.className = 'button'; link.textContent = label;
+      link.href = base + `/tasks/${enc(task.id)}/${kind}`; link.download = `${kind}-${task.id}.${extension}`;
+      $('#history-downloads').append(link);
+    }
+  }
+  $('#recording-status').textContent = task?.downloads?.recording ? '录音：左声道为对方，右声道为 AI 助理。' : task && task.state !== 'ended' ? '录音在通话结束后可下载。' : '该通话没有已保存的录音。录音功能启用后的新 AI 通话会自动保存。';
   const fields = [['号码',call?.number || task?.input.number], ['目标',task?.input.goal], ['状态',status(task?.outcome || task?.state || call?.state)], ['开始时间',time(call?.started_at || task?.started_at || task?.created_at)], ['结束时间',time(call?.ended_at || task?.ended_at)], ['结束原因',call?.end_reason], ['模型',task?.config.model], ['语言',task?.config.language]];
   for (const [label,value] of fields) {
     if (value == null) continue;
@@ -235,6 +248,7 @@ async function historyDetail(row) {
     }
   }
   if (!parent.childNodes.length) parent.textContent = '暂无对话转写。旧通话未启用转写或未接通时，可能没有 transcript。';
+  $('#history-detail').scrollIntoView({behavior:'instant', block:'start'});
 }
 $('#refresh-history').onclick = () => run(refreshHistory, $('#refresh-history'));
 $('#history-device').onchange = () => { historyOffset = 0; ++detailRequest; $('#history-detail').hidden = true; run(refreshHistory); };

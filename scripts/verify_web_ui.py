@@ -6,6 +6,7 @@ import os
 import socket
 import sys
 import tempfile
+import wave
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -17,6 +18,7 @@ from conftest import DEVICE, Phone  # noqa: E402
 
 from agentcall.api.app import create_app  # noqa: E402
 from agentcall.api.ui import private_write  # noqa: E402
+from agentcall.audio.recording import CallRecording  # noqa: E402
 from agentcall.bluetooth.hfp import HFPConnection  # noqa: E402
 from agentcall.service.backend import Backend  # noqa: E402
 from agentcall.service.config import Config  # noqa: E402
@@ -88,6 +90,11 @@ async def verify(directory):
         "model.transcript",
         {"role": "user", "text": "The answer is 42. <img src=x onerror=alert(1)>"},
     )
+    backend.store.recordings_dir = directory / "recordings"
+    recording = CallRecording(backend.store.recordings_dir / (history_task["id"] + ".wav"), 8000)
+    recording.write(0, bytes(1600))
+    recording.write(1, bytes(1600))
+    assert recording.finish()
     app = create_app(config, backend, manager)
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
@@ -138,15 +145,35 @@ async def verify(directory):
             tasks = [backend.store.task(i) for i in backend.store.task_ids()]
             assert any(t["input"]["number"] == "33333" for t in tasks)
             assert not any(command.startswith("ATD") for command in phone.commands)
+            await (
+                page.locator("#task-status").get_by_role("button", name="查看", exact=True).click()
+            )
+            await expect(page.locator("#history-detail")).to_be_focused()
+            await expect(page.locator("#tab-history")).to_have_attribute("aria-selected", "true")
             await page.get_by_role("tab", name="查看历史").click()
             row = page.locator("#history-list tr").filter(has_text="History goal")
             await row.get_by_role("button", name="查看详情").click()
+            await expect(page.locator("#history-detail")).to_be_focused()
+            assert await page.locator("#history-detail").evaluate(
+                "el => el.getBoundingClientRect().top < window.innerHeight"
+            )
             await expect(page.locator("#history-result")).to_contain_text('"answer": "42"')
             await expect(page.locator("#history-transcript")).to_contain_text(
                 "Hello from the assistant."
             )
             await expect(page.locator("#history-transcript")).to_contain_text("The answer is 42.")
             await expect(page.locator("#history-transcript img")).to_have_count(0)
+            async with page.expect_download() as pending:
+                await page.get_by_role("link", name="下载 Transcript").click()
+            downloaded = await pending.value
+            assert downloaded.suggested_filename.endswith(".txt")
+            text = Path(await downloaded.path()).read_text()
+            assert "Hello from the assistant." in text and "The answer is 42." in text
+            async with page.expect_download() as pending:
+                await page.get_by_role("link", name="下载录音").click()
+            downloaded = await pending.value
+            with wave.open(str(await downloaded.path())) as audio:
+                assert audio.getnchannels() == 2 and audio.getnframes() > 0
             await page.set_viewport_size({"width": 390, "height": 844})
             assert await page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
             await expect(page.get_by_role("tab")).to_have_count(3)
@@ -172,6 +199,7 @@ async def verify(directory):
                         "transcription_enabled": True,
                         "result_and_paginated_transcript": True,
                         "transcript_xss_safe": True,
+                        "detail_navigation_and_downloads": True,
                         "mobile": True,
                         "live_pin_change_and_logout": True,
                         "real_calls": False,

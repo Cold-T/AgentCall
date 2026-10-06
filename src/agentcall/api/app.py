@@ -3,16 +3,27 @@ import json
 from contextlib import asynccontextmanager, suppress
 from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, Header, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi import (
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.security import HTTPBasic, HTTPBearer
 from pydantic import BaseModel, Field
 from starlette.requests import HTTPConnection
 
 from agentcall.api.auth import FailedAuthLimiter, authorized
+from agentcall.api.downloads import transcript_text
 from agentcall.api.ui import Sessions, install_ui, same_origin
+from agentcall.audio.recording import recording_path
 from agentcall.bluetooth.hfp import HFPError
 from agentcall.service.backend import Backend
 from agentcall.service.config import Config
@@ -395,7 +406,39 @@ def create_app(config=None, backend=None, task_manager=None):
         result = backend.store.task(task_id)
         run = task_manager.runs.get(task_id)
         result["audio"] = run.bridge.status() if run and run.bridge else None
+        path = recording_path(backend.store, task_id)
+        result["downloads"] = {
+            "transcript": bool(
+                backend.store.db.execute(
+                    "SELECT 1 FROM task_events WHERE task_id=? AND kind='model.transcript' "
+                    "AND length(json_extract(data,'$.text')) > 0 LIMIT 1",
+                    (task_id,),
+                ).fetchone()
+            ),
+            "recording": bool(result["state"] == "ended" and path and path.is_file()),
+        }
         return result
+
+    @app.get("/tasks/{task_id}/transcript", tags=["tasks"])
+    async def download_transcript(task_id: str):
+        text = transcript_text(backend.store, task_id)
+        if text is None:
+            raise HTTPException(404, "No transcript available")
+        return Response(
+            text,
+            media_type="text/plain",
+            headers={"Content-Disposition": f'attachment; filename="transcript-{task_id}.txt"'},
+        )
+
+    @app.get("/tasks/{task_id}/recording", tags=["tasks"])
+    async def download_recording(task_id: str):
+        task = backend.store.task(task_id)
+        if task["state"] != "ended":
+            raise HTTPException(409, "Recording is available after the task ends")
+        path = recording_path(backend.store, task_id)
+        if not path or not path.is_file():
+            raise HTTPException(404, "No recording available for this call")
+        return FileResponse(path, media_type="audio/wav", filename=f"recording-{task_id}.wav")
 
     @app.get("/tasks/{task_id}/events", tags=["tasks"])
     async def task_events(

@@ -89,3 +89,12 @@ curl -H "Authorization: Bearer $AGENTCALL_TOKEN" \
 401 返回 WWW-Authenticate: Bearer（PIN 模式为 Basic）；业务 HTTP、SSE、OpenAPI / docs 和音频 WebSocket 均受认证保护。OpenAI / Gemini 凭据不返回客户端。认证后可读写非秘密服务配置，见 [网页设置与会话 API](web-ui.md)。真实 API 和真机兼容性验收边界见 checkpoint 验证记录。
 
 通话背景由后台永久提供，API 创建任务无需填写 `background`；该字段可用于附加资料，空值或自定义内容不会替换固定通话说明。PIN 即 API token，Bearer / Basic 客户端不需要先登录或换取其他 token。
+
+## 下载通话资料
+
+`GET /tasks/{task_id}` 新增 `downloads.transcript` / `downloads.recording` 可用性标记。以下下载与其他 API 使用相同的 PIN/Bearer/网页登录认证，并禁止缓存：
+
+- `GET /tasks/{task_id}/transcript`：UTF-8 TXT 附件，包含目标、时间、发言人及完整分页转写；合并同一项目的连续 delta。没有转写返回 404。被打断的完整文本可能包含未播放内容。
+- `GET /tasks/{task_id}/recording`：双声道 WAV 附件，左声道为对方，右声道为实际送入 SCO 的 AI 语音。任务尚未结束返回 409；没有录音返回 404。
+
+新 AI 通话自动录音。文件以任务 UUID 命名，存放在 SQLite 数据库同级的 `recordings/`，目录默认权限 0700，录音 0600；只通过受认证的下载路由提供。使用 `:memory:` 数据库时不持久录音。旧通话、手机同步历史和未接通任务没有可追溯生成的录音。录音保留到手动删除，不自动轮换；双声道 16-bit PCM 约占每分钟 1.92 MB（CVSD）或 3.84 MB（mSBC）。录音写入失败会舍弃该录音并记录 `task.recording_failed`，通话继续运行。

@@ -7,6 +7,7 @@ from contextlib import suppress
 from jsonschema import Draft202012Validator, ValidationError
 
 from agentcall.audio.bridge import AudioBridge
+from agentcall.audio.recording import CallRecording, recording_path
 from agentcall.bluetooth.hfp import HFPError
 from agentcall.providers.base import ProviderError
 from agentcall.providers.gemini import GeminiLive
@@ -191,6 +192,7 @@ class TaskRun:
         self.result_audio_floor = None
         self.last_audio_response = None
         self.opened = False
+        self.recording = None
 
     def spawn(self, coro, outcome):
         task = asyncio.create_task(coro)
@@ -294,6 +296,13 @@ class TaskRun:
             except HFPError as exc:
                 raise TaskFailure(self.terminal() or "dial_failed", str(exc)) from exc
             audio = await self.wait_connected()
+            path = recording_path(self.store, self.id)
+            if path:
+                try:
+                    self.recording = CallRecording(path, audio.rate)
+                    audio.recorder = self.recording
+                except OSError:
+                    self.manager.event(self.id, "task.recording_failed")
             self.bridge = AudioBridge(audio, self.provider)
             self.manager.state(self.id, "in_call")
             self.manager.event(self.id, "task.audio", **self.bridge.status())
@@ -335,6 +344,12 @@ class TaskRun:
             if self.bridge:
                 self.manager.event(self.id, "task.audio", **self.bridge.status())
                 self.bridge.audio.owner = False
+            if self.recording:
+                self.bridge.audio.recorder = None
+                saved = await asyncio.to_thread(self.recording.finish)
+                self.manager.event(
+                    self.id, "task.recording_saved" if saved else "task.recording_failed"
+                )
             if self.provider:
                 with suppress(ProviderError, OSError, TimeoutError):
                     await self.provider.close()

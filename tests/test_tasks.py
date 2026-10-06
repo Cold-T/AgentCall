@@ -476,7 +476,8 @@ async def completed(rig, task_id):
     return (await rig.client.get(f"/tasks/{task_id}")).json()
 
 
-async def test_complete_http_task_model_audio_tools_hangup_and_records(rig):
+async def test_complete_http_task_model_audio_tools_hangup_and_records(rig, tmp_path):
+    rig.store.recordings_dir = tmp_path / "recordings"
     task_id = await create_start(rig)
     await wait_for(lambda: rig.store.task(task_id)["state"] == "in_call")
     ready_at = asyncio.get_running_loop().time()
@@ -484,6 +485,20 @@ async def test_complete_http_task_model_audio_tools_hangup_and_records(rig):
     assert not rig.output  # Even an immediately generated greeting cannot play early.
     result = await completed(rig, task_id)
     assert result["outcome"] == "completed", result
+    assert result["downloads"] == {"transcript": True, "recording": True}
+    recording = await rig.client.get(f"/tasks/{task_id}/recording")
+    assert recording.status_code == 200 and recording.headers["content-type"] == "audio/wav"
+    import io
+    import wave
+
+    with wave.open(io.BytesIO(recording.content)) as audio:
+        assert audio.getnchannels() == 2 and audio.getframerate() == 8000
+        assert audio.getnframes() >= 8000  # Includes the one-second opening silence.
+    transcript = await rig.client.get(f"/tasks/{task_id}/transcript")
+    assert (
+        transcript.status_code == 200 and "attachment" in transcript.headers["content-disposition"]
+    )
+    assert "Get the answer" in transcript.text
     assert result["model_result"]["result"] == {"answer": 42}
     assert result["call"]["state"] == "idle" and result["call"]["end_reason"] == "phone_ended"
     assert result["call_id"] == result["call"]["id"]
