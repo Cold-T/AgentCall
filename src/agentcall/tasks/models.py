@@ -79,6 +79,19 @@ class ProviderConfig(BaseModel):
         ):
             raise ValueError("turn detection and interruption must be handled by the provider")
         self.options.setdefault("transcription", {"model": "gpt-4o-mini-transcribe"})
+        language = self.language.strip().casefold().replace("_", "-")
+        if language in {"english", "英文", "英语", "en"} or language.startswith("en-"):
+            self.options["speed"] = 1.0
+        elif language in {
+            "中文",
+            "普通话",
+            "粤语",
+            "chinese",
+            "mandarin",
+            "cantonese",
+            "zh",
+        } or language.startswith("zh-"):
+            self.options["speed"] = 1.2
         json.dumps(self.options, allow_nan=False)
         return self
 

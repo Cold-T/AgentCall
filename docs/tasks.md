@@ -88,3 +88,7 @@ SCO 监听在响铃期间保持等待，不以固定 20 次监听轮询提前结
 音频监听先于 `AT+BCC` / `AT+BCS` 编码协商启动，使用 Linux `BT_DEFER_SETUP` 暂缓接受手机的 SCO 请求。接受正确手机的连接后，依据协商结果设置 `BT_VOICE`，再执行授权读取；授权读取返回零不是音频 EOF，不送入转写或录音。codec 选择与最终确认分开，避免等待最终 AT OK 时阻塞手机先到达的 SCO 请求；对协商选定的 CVSD 或 mSBC 使用匹配参数。`audio.listening` 表示监听已启动；只有 `audio.ready` 和任务开始收发音频后才能认为模型对话已启动。iPhone 在响铃阶段重新协商 codec 时，服务会先恢复监听，再发送 `AT+BCS`，接收替代音频链路；`audio.ready` 仍要求最终 codec 确认。模拟回归和本次 iPhone 真机结果见 [验收记录](iphone-acceptance.md)。
 
 延迟接受的 SCO 授权读取只启动内核 HCI 建链，并不代表链路已经就绪。服务在配置的音频超时内等待 `SCO_OPTIONS` 的 MTU 可读，只重试 `ENOTCONN`；连接重置等其他错误立即保留并报告，等待失败会关闭 socket。不会将这段授权等待当作收到模型输入。
+
+## 语言与语速
+
+OpenAI 通话按任务语言设置输出语速：英文为 `1.0`，中文（含普通话和粤语）为 `1.2`。创建任务时自动覆盖继承的 `options.speed`，网页与 API 使用同一规则。其他语言保留配置的语速；Gemini 不使用 OpenAI 的 `speed` 参数。已创建的任务保留原配置。
