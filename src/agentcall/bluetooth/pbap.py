@@ -72,7 +72,7 @@ class PBAPClient:
                             contacts = entries
                         else:
                             history.extend(entries)
-                    except (RuntimeError, TimeoutError, ValueError) as exc:
+                    except (RuntimeError, TimeoutError, ValueError, OSError) as exc:
                         errors[book] = str(exc)
                 return {"contacts": contacts, "history": history, "errors": errors}
             finally:
@@ -84,6 +84,9 @@ class PBAPClient:
         await self.rpc(session, "org.bluez.obex.PhonebookAccess1", "Select", "ss", ["int", book])
         with tempfile.TemporaryDirectory(prefix="agentcall-pbap-") as temp:
             target = str(Path(temp) / "phonebook.vcf")
+            # A system obexd writes as root. Precreate privately so the service user
+            # retains ownership and can read the completed transfer without chmod.
+            Path(target).touch(mode=0o600, exist_ok=False)
             transfer, props = await self.rpc(
                 session,
                 "org.bluez.obex.PhonebookAccess1",

@@ -27,7 +27,7 @@ BlueZ 5.83 的 obexd Bluetooth 服务插件通过 logind 检查用户是否有�
 
 可显式部署 system bus 模式；AgentCall 仍以普通用户运行。默认 `obex_bus="session"` 不变，也不会自动尝试提权或切换 bus。以下步骤需要管理员授权：
 
-1. 检查 `/usr/libexec/bluetooth/obexd --help` 支持 `--system-bus`；若安装路径不同，修改 `deploy/agentcall-obex.service`。
+1. 检查 `/usr/libexec/bluetooth/obexd --help` 支持 `--system-bus`；若安装路径不同，修改 `deploy/agentcall-obex.service`。BlueZ 5.83 还存在 PBAP 使用私有 D-Bus 连接的上游缺陷，即使 `CreateSession` 成功，`PhonebookAccess1.Select` 仍返回 UnknownMethod；需使用包含 [上游修复](https://github.com/bluez/bluez/commit/df0036d9e41fc4bb0fe8839b7833bac16359396b) 的 obexd。本项目真机环境使用独立构建的 5.87，系统 bluetoothd 保持 5.83。
 2. 将 `deploy/agentcall-obex.conf.example` 中 `AGENTCALL_USER` 替换为实际服务用户。该策略只允许 root 持有 OBEX 名称、该用户向 OBEX 发送请求；这也授予该用户访问 obexd 其他可用客户端功能的权限。
 3. 将替换后的文件安装到 `/etc/dbus-1/system.d/agentcall-obex.conf`，将单元安装到 `/etc/systemd/system/agentcall-obex.service`，然后执行：
 
@@ -41,6 +41,22 @@ BlueZ 5.83 的 obexd Bluetooth 服务插件通过 logind 检查用户是否有�
 4. 在服务配置 `[service]` 下设置 `obex_bus="system"`，重启 AgentCall，再执行 `phone sync DEVICE`。手机 PBAP 授权仍需确认。OBEX 客户端接口就绪不代表手机同步成功，应检查同步返回及实际联系人。
 
 示例单元仅加载 Bluetooth、Object Push 和 filesystem 服务插件以满足 obexd 初始化要求，不依赖 Evolution、不启用自动接受文件。它仍注册 Object Push 服务，应仅在受控主机上使用。回退时将 `obex_bus` 改回 `session`、停用 `agentcall-obex`、删除上述策略及单元、重新加载 D-Bus / systemd，再重启 AgentCall。
+
+若发行版只有受影响的 5.83，可单独构建官方 5.87 obexd，不覆盖包管理器文件，也不执行 `make install`。以下命令在 Ubuntu 25.10 aarch64 上构建：
+
+```bash
+sudo apt install libglib2.0-dev libdbus-1-dev libical-dev libreadline-dev libtool autoconf automake
+curl -fLO https://www.kernel.org/pub/linux/bluetooth/bluez-5.87.tar.xz
+echo '26bdcf2cebd7310c6f598850606b037ef0c515fe6608ebc54d22c50c4c32b35f  bluez-5.87.tar.xz' | sha256sum -c -
+tar -xf bluez-5.87.tar.xz
+cd bluez-5.87
+./configure --disable-systemd --disable-udev --disable-tools --disable-client --disable-monitor --disable-manpages --disable-cups --disable-mesh --disable-midi --disable-testing --disable-datafiles
+make obexd/src/builtin.h
+make -j4 obexd/src/obexd
+sudo install -D -m 755 obexd/src/obexd /usr/local/libexec/bluetooth/obexd-5.87
+```
+
+将系统单元的 ExecStart 路径改为 `/usr/local/libexec/bluetooth/obexd-5.87`，保留原参数，再重新加载单元并重启 `agentcall-obex`。`--disable-client` 指 BlueZ 的交互式命令行程序，不会移除 obexd 的 PBAP 客户端。回退时停用自建服务并删除独立二进制即可，发行版 obexd 未被覆盖。SHA256 是本次下载工件的固定哈希，下载使用官方 HTTPS 源。
 
 ## 配对、连接与手动通话
 

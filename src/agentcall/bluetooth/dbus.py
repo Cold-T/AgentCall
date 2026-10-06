@@ -136,6 +136,8 @@ class BlueZ:
         self.backend = backend
         self.bus = None
         self.obex = None
+        self.obex_owner = None
+        self.obex_transfers = {}
         self.agent = Agent(backend)
 
     async def start(self):
@@ -220,7 +222,78 @@ class BlueZ:
                 BusType.SYSTEM if self.backend.config.obex_bus == "system" else BusType.SESSION
             )
             self.obex = await MessageBus(bus_type=bus_type).connect()
-        return await rpc(self.obex, "org.bluez.obex", path, interface, member, signature, body)
+            self.obex.add_message_handler(self.obex_properties_changed)
+            await rpc(
+                self.obex,
+                "org.freedesktop.DBus",
+                "/org/freedesktop/DBus",
+                "org.freedesktop.DBus",
+                "AddMatch",
+                "s",
+                [
+                    "type='signal',sender='org.bluez.obex',"
+                    "interface='org.freedesktop.DBus.Properties',member='PropertiesChanged',"
+                    "arg0='org.bluez.obex.Transfer1'"
+                ],
+            )
+        if member == "CreateSession" and interface == "org.bluez.obex.Client1":
+            owner = (
+                await rpc(
+                    self.obex,
+                    "org.freedesktop.DBus",
+                    "/org/freedesktop/DBus",
+                    "org.freedesktop.DBus",
+                    "GetNameOwner",
+                    "s",
+                    ["org.bluez.obex"],
+                )
+            )[0]
+            if owner != self.obex_owner:
+                self.obex_transfers.clear()
+            self.obex_owner = owner
+        transfer_query = (
+            interface == "org.freedesktop.DBus.Properties"
+            and member == "GetAll"
+            and body == ["org.bluez.obex.Transfer1"]
+        )
+        if transfer_query:
+            cached = self.obex_transfers.get(path, {})
+            if cached.get("Status", Variant("s", "")).value in ("complete", "error"):
+                # obexd can remove a completed transfer before the first polling request.
+                return [cached.copy()]
+        try:
+            return await rpc(self.obex, "org.bluez.obex", path, interface, member, signature, body)
+        except RuntimeError as exc:
+            cached = self.obex_transfers.get(path, {})
+            if (
+                transfer_query
+                and "org.freedesktop.DBus.Error.UnknownObject" in str(exc)
+                and cached.get("Status", Variant("s", "")).value in ("complete", "error")
+            ):
+                return [cached.copy()]
+            raise
+        finally:
+            if interface == "org.bluez.obex.Client1" and member == "RemoveSession" and body:
+                prefix = body[0] + "/"
+                self.obex_transfers = {
+                    p: props for p, props in self.obex_transfers.items() if not p.startswith(prefix)
+                }
+
+    def obex_properties_changed(self, message):
+        if (
+            message.message_type == MessageType.SIGNAL
+            and message.sender == self.obex_owner
+            and message.interface == "org.freedesktop.DBus.Properties"
+            and message.member == "PropertiesChanged"
+            and message.body[0] == "org.bluez.obex.Transfer1"
+        ):
+            props = self.obex_transfers.setdefault(message.path, {})
+            props.update(message.body[1])
+            for key in message.body[2]:
+                props.pop(key, None)
+            # Bound observations from external clients as well as our own transfers.
+            if len(self.obex_transfers) > 1024:
+                self.obex_transfers.pop(next(iter(self.obex_transfers)))
 
     async def devices(self):
         objects = (await self.call("/", "org.freedesktop.DBus.ObjectManager", "GetManagedObjects"))[

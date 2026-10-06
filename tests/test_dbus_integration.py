@@ -205,3 +205,103 @@ def test_obex_bus_configuration(tmp_path):
     path.write_text('[service]\nobex_bus="invalid"\n')
     with pytest.raises(ValueError, match="obex_bus"):
         Config.load(path)
+
+
+@pytest.mark.parametrize("status", ["complete", "error"])
+@pytest.mark.parametrize("before_poll", [True, False])
+async def test_obex_terminal_event_survives_transfer_removal(monkeypatch, status, before_poll):
+    process = subprocess.Popen(
+        ["dbus-daemon", "--session", "--nofork", "--print-address=1"],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    address = process.stdout.readline().strip()
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", address)
+    fake = await MessageBus(bus_address=address).connect()
+    await fake.request_name("org.bluez.obex")
+    store = Store(":memory:")
+    backend = Backend(Config(), store)
+    session = "/org/bluez/obex/client/session1"
+    transfer = session + "/transfer1"
+    queries = []
+
+    def completed():
+        fake.send(
+            Message.new_signal(
+                transfer,
+                "org.freedesktop.DBus.Properties",
+                "PropertiesChanged",
+                "sa{sv}as",
+                ["org.bluez.obex.Transfer1", {"Status": Variant("s", status)}, []],
+            )
+        )
+
+    def handle(message):
+        if (
+            message.message_type != MessageType.METHOD_CALL
+            or message.destination != "org.bluez.obex"
+        ):
+            return None
+        if message.member == "CreateSession":
+            return Message.new_method_return(message, "o", [session])
+        if message.member == "PullAll":
+            if before_poll:
+                completed()
+            return Message.new_method_return(
+                message, "oa{sv}", [transfer, {"Status": Variant("s", "queued")}]
+            )
+        if message.member == "GetAll":
+            queries.append(message)
+            completed()
+            return Message.new_error(
+                message, "org.freedesktop.DBus.Error.UnknownObject", "transfer removed"
+            )
+        return Message.new_method_return(message)
+
+    fake.add_message_handler(handle)
+    try:
+        await backend.bluez.obex_call(
+            "/org/bluez/obex",
+            "org.bluez.obex.Client1",
+            "CreateSession",
+            "sa{sv}",
+            ["11:22:33:44:55:66", {"Target": Variant("s", "PBAP")}],
+        )
+        await backend.bluez.obex_call(
+            session,
+            "org.bluez.obex.PhonebookAccess1",
+            "PullAll",
+            "sa{sv}",
+            ["/tmp/unused.vcf", {}],
+        )
+        props = (
+            await backend.bluez.obex_call(
+                transfer,
+                "org.freedesktop.DBus.Properties",
+                "GetAll",
+                "s",
+                ["org.bluez.obex.Transfer1"],
+            )
+        )[0]
+        assert props["Status"].value == status
+        assert bool(queries) is not before_poll
+        await backend.bluez.obex_call(
+            "/org/bluez/obex", "org.bluez.obex.Client1", "RemoveSession", "o", [session]
+        )
+        assert not backend.bluez.obex_transfers
+        with pytest.raises(RuntimeError, match="UnknownObject"):
+            # No completed event may be borrowed from the removed session.
+            await backend.bluez.obex_call(
+                session + "/unknown",
+                "org.freedesktop.DBus.Properties",
+                "GetAll",
+                "s",
+                ["org.bluez.obex.Transfer1"],
+            )
+    finally:
+        await backend.close()
+        fake.disconnect()
+        store.close()
+        process.terminate()
+        await asyncio.to_thread(process.wait, timeout=5)
+        process.stdout.close()

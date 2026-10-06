@@ -7,6 +7,7 @@ Requires=bluetooth.service
 Type=dbus
 BusName=org.bluez.obex
 # Ubuntu path. Check the installed obexd path on other distributions.
+# Use an obexd containing the public PBAP bus fix; stock 5.83 is affected.
 # Only minimal server plugins: no Evolution phonebook server dependencies.
 # Auto-accept is deliberately absent; this is used for outbound PBAP requests.
 ExecStart=/usr/libexec/bluetooth/obexd --system-bus --plugin=bluetooth,opp,filesystem

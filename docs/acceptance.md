@@ -1,6 +1,6 @@
 # CP6：稳定性与 Android / iPhone 真机验收
 
-CP2 的完成条件已调整为软件实现与自动验证，现已完成。通话控制、双向音频、PBAP、AI 任务闭环及异常场景的 Android / iPhone 完整真机验收统一安排在 CP6；两种平台当前均未验证。
+CP2 的完成条件已调整为软件实现与自动验证，现已完成。通话控制、双向音频、PBAP、AI 任务闭环及异常场景的 Android / iPhone 完整真机验收统一安排在 CP6；Android 已开始验证，进度见文末，iPhone 尚未验证。
 
 下列基础蓝牙命令已在 CP2 提供。AI 任务和 provider 验收依赖 CP3–CP5 完成，届时补充具体命令和预期输出。
 
@@ -57,4 +57,4 @@ CP2 的完成条件已调整为软件实现与自动验证，现已完成。通�
 
 ## 验收结果
 
-Android 已开始真机验收，配对、HFP、拨号、SCO、提示音输出与挂断已实际验证；详细结果及未完成项见 [android-acceptance.md](android-acceptance.md)。iPhone 尚未执行。CP6 尚未完成。软件验证记录见 [verification.md](verification.md)。
+Android 已开始真机验收，配对、HFP、拨号、SCO、提示音输出与挂断已实际验证；PBAP 实际同步 206 条联系人号码和 150 条手机历史，持久化及 API 查询通过。详细结果及未完成项见 [android-acceptance.md](android-acceptance.md)。iPhone 尚未执行。CP6 尚未完成。软件验证记录见 [verification.md](verification.md)。
