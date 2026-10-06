@@ -1,6 +1,6 @@
 # HTTP API
 
-运行服务后，`/docs` 提供交互式 OpenAPI 文档，`/openapi.json` 提供 schema。若配置 Bearer token，所有 HTTP 路径（包括文档）和音频 WebSocket 都要求 Authorization header。
+运行服务后，`/docs` 提供交互式 OpenAPI 文档，`/openapi.json` 提供 schema。配置 token 时，业务 API、文档和音频 WebSocket 要求 Bearer / PIN 认证或有效网页会话。`/ui`、白名单静态资源和 `/session/login` 是公开入口，未登录只显示 PIN 表单。
 
 | 操作 | 接口 | 请求 / 说明 |
 | --- | --- | --- |
@@ -85,4 +85,4 @@ curl -H "Authorization: Bearer $AGENTCALL_TOKEN" \
   'http://127.0.0.1:8765/events/history?after_id=0&limit=100'
 ```
 
-401 返回 WWW-Authenticate: Bearer；HTTP、SSE、OpenAPI / docs 和音频 WebSocket 均受认证保护。OpenAI / Gemini 凭据与服务端完整配置不提供查询接口，也不返回客户端。真实 API 和真机兼容性验收边界见 checkpoint 验证记录。
+401 返回 WWW-Authenticate: Bearer（PIN 模式为 Basic）；业务 HTTP、SSE、OpenAPI / docs 和音频 WebSocket 均受认证保护。OpenAI / Gemini 凭据不返回客户端。认证后可读写非秘密服务配置，见 [网页设置与会话 API](web-ui.md)。真实 API 和真机兼容性验收边界见 checkpoint 验证记录。

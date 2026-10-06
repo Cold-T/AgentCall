@@ -1,18 +1,18 @@
 import asyncio
-import base64
-import binascii
-import hmac
 import json
 from contextlib import asynccontextmanager, suppress
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Header, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPBasic, HTTPBearer
 from pydantic import BaseModel, Field
 from starlette.requests import HTTPConnection
 
-from agentcall.api.auth import FailedAuthLimiter
+from agentcall.api.auth import FailedAuthLimiter, authorized
+from agentcall.api.ui import Sessions, install_ui, same_origin
 from agentcall.bluetooth.hfp import HFPError
 from agentcall.service.backend import Backend
 from agentcall.service.config import Config
@@ -54,33 +54,25 @@ class ConnectionBasic(HTTPBasic):
         return await super().__call__(request)
 
 
-def authorized(header, token, pin_auth=False):
-    if not token:
-        return not pin_auth
-    if hmac.compare_digest((header or "").encode(), f"Bearer {token}".encode()):
-        return True
-    if pin_auth and (header or "").startswith("Basic "):
-        try:
-            credentials = base64.b64decode(header[6:], validate=True).decode("utf-8")
-            username, password = credentials.split(":", 1)
-            return username == "pin" and hmac.compare_digest(password.encode(), token.encode())
-        except (ValueError, binascii.Error):
-            return False
-    return False
-
-
 def create_app(config=None, backend=None, task_manager=None):
     config = config or Config()
     if config.pin_auth and not config.token:
         raise ValueError("pin_auth requires a configured PIN")
     limiter = FailedAuthLimiter()
+    sessions = Sessions(config)
 
-    def check_auth(connection):
+    def check_auth(connection, credential=None):
+        if credential is None and sessions.valid(connection):
+            return 200, 0
         key = connection.client.host if connection.client else "unknown"
         retry = limiter.retry_after(key) if config.pin_auth else 0
         if retry:
             return 429, retry
-        if authorized(connection.headers.get("authorization"), config.token, config.pin_auth):
+        if authorized(
+            credential if credential is not None else connection.headers.get("authorization"),
+            config.token,
+            config.pin_auth,
+        ):
             return 200, 0
         if config.pin_auth:
             limiter.failed(key)
@@ -121,6 +113,33 @@ def create_app(config=None, backend=None, task_manager=None):
 
     @app.middleware("http")
     async def auth(request: Request, call_next):
+        path = request.url.path
+        if config.root_path and path.startswith(config.root_path + "/"):
+            path = path[len(config.root_path) :]
+        if path == "/ui" or path.startswith("/ui/assets/") or path == "/session/login":
+            response = await call_next(request)
+        else:
+            if (
+                sessions.valid(request)
+                and not authorized(
+                    request.headers.get("authorization"), config.token, config.pin_auth
+                )
+                and request.method not in ("GET", "HEAD", "OPTIONS")
+                and (not same_origin(request) or request.headers.get("X-AgentCall-CSRF") != "1")
+            ):
+                return JSONResponse({"detail": "Same-origin request required"}, status_code=403)
+            response = await authenticated_response(request, call_next)
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "same-origin"
+        if path.startswith("/ui"):
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; script-src 'self'; style-src 'self'; "
+                "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+            )
+        return response
+
+    async def authenticated_response(request, call_next):
         status, retry = check_auth(request)
         if status != 200:
             return JSONResponse(
@@ -141,6 +160,14 @@ def create_app(config=None, backend=None, task_manager=None):
                 },
             )
         return await call_next(request)
+
+    install_ui(app, config, sessions, check_auth)
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(request, exc):
+        if request.url.path.endswith(("/session/login", "/settings/credentials")):
+            return JSONResponse({"detail": "Invalid credential fields"}, status_code=422)
+        return await request_validation_exception_handler(request, exc)
 
     @app.exception_handler(HFPError)
     async def hfp_error(request, exc):
@@ -401,6 +428,11 @@ def create_app(config=None, backend=None, task_manager=None):
 
     @app.websocket("/calls/{call_id}/audio")
     async def audio_socket(websocket: WebSocket, call_id: str):
+        if sessions.valid(websocket) and (
+            not websocket.headers.get("origin") or not same_origin(websocket)
+        ):
+            await websocket.close(code=1008)
+            return
         if check_auth(websocket)[0] != 200:
             await websocket.close(code=1008)
             return

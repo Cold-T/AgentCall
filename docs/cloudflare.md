@@ -2,9 +2,9 @@
 
 公网域名：`https://agenticcall.coldt.uk`。本机网关为 `http://127.0.0.1:8766`，后台只监听 `127.0.0.1:8765`。公网使用 HTTPS，本机回源使用 HTTP；不需要 Cloudflare Access、邮箱白名单或本机证书。
 
-- `/`：仅返回 UI 位置预留信息，未开发图形界面。
+- `/`：PIN 登录页；认证后显示最简操作网页，见 [网页说明](web-ui.md)。
 - `/api/`：全部业务 API，固定 PIN 认证。
-- `/api/docs`：API 文档；浏览器认证用户名为 `pin`，密码为自行设置的 PIN。
+- `/api/docs`：API 文档；网页登录后可直接访问，也支持 Basic 用户名 `pin` / 密码 PIN。
 - `/api/events`：SSE；`/api/calls/{id}/audio`：双向音频 WebSocket，均验证 PIN。
 
 ## 设置与轮换 PIN

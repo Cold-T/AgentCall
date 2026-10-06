@@ -11,6 +11,7 @@ dependencies = ["fastapi>=0.115,<1", "uvicorn[standard]>=0.30,<1", "dbus-next>=0
 
 [project.optional-dependencies]
 test = ["pytest>=8,<10", "pytest-asyncio>=0.24,<2", "ruff>=0.11,<1"]
+browser-test = ["playwright>=1.55,<2"]
 
 [project.scripts]
 agentcall-service = "agentcall.service.main:main"
@@ -21,6 +22,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "agentcall.vendor" = ["LICENSE.handsfree-linux"]
+"agentcall.api" = ["web/*.html", "web/*.css", "web/*.js"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
