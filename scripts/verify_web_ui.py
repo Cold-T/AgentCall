@@ -1,8 +1,4 @@
-"""Exercise the web UI against a mock HFP phone; never contact a real phone or provider.
-
-Install the optional browser-test extra and run playwright install chromium first.
-AGENTCALL_TEST_BROWSER optionally selects an existing Chromium executable.
-"""
+"""Verify the three-tab UI against a mock phone, without dialing or model API calls."""
 
 import asyncio
 import json
@@ -20,22 +16,28 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
 from conftest import DEVICE, Phone  # noqa: E402
 
 from agentcall.api.app import create_app  # noqa: E402
+from agentcall.api.ui import private_write  # noqa: E402
 from agentcall.bluetooth.hfp import HFPConnection  # noqa: E402
 from agentcall.service.backend import Backend  # noqa: E402
 from agentcall.service.config import Config  # noqa: E402
 from agentcall.storage.store import Store  # noqa: E402
+from agentcall.tasks.manager import TaskManager  # noqa: E402
+from agentcall.tasks.models import TaskInput  # noqa: E402
 
 
 async def verify(directory):
     config_path = directory / "config.toml"
     config_path.write_text('[service]\npin_auth=true\nroot_path="/api"\n')
-    os.environ["AGENTCALL_TOKEN"] = "0123"
+    os.environ["AGENTCALL_TOKEN"] = "1111"  # Deliberately stale startup credential.
+    os.environ["OPENAI_API_KEY"] = "test-only"
+    os.environ.pop("GEMINI_API_KEY", None)
+    private_write(directory / "pin.env", "AGENTCALL_TOKEN=0123\n")
     config = Config.load(config_path)
     backend = Backend(config, Store(":memory:"))
     host, peer = socket.socketpair()
     phone = Phone(peer)
 
-    async def dbus_call(*args, **kwargs):
+    async def nothing(*args, **kwargs):
         return []
 
     async def devices():
@@ -49,26 +51,44 @@ async def verify(directory):
             }
         ]
 
-    async def close():
-        pass
-
     async def start():
         backend.running = True
 
     backend.start = start
     backend.bluez = SimpleNamespace(
-        call=dbus_call, devices=devices, close=close, agent=SimpleNamespace(pending={})
+        call=nothing, devices=devices, close=nothing, agent=SimpleNamespace(pending={})
     )
     backend.ensure_audio = lambda device: None
     connection = HFPConnection(host, DEVICE, backend.emit, timeout=0.3)
     backend.connections[DEVICE] = connection
     await connection.start()
-    backend.store.db.execute(
-        "INSERT INTO contacts VALUES (?,?,?,?,?,?)",
-        ("contact1", DEVICE, "Test Contact", "12345", "", "now"),
+    backend.store.save_phonebook(
+        DEVICE, [{"id": "contact1", "name": "Test Contact", "number": "12345", "raw": ""}], []
     )
-    backend.store.db.commit()
-    app = create_app(config, backend)
+    manager = TaskManager(backend, config)
+    manager.start = nothing  # Keep submitted tasks queued; never run a model or dial.
+    history_task = manager.create(TaskInput(device=DEVICE, number="22222", goal="History goal"))
+    call_id = backend.store.new_call(DEVICE, "22222", "outgoing", "ended")
+    backend.store.update_task(
+        history_task["id"],
+        call_id=call_id,
+        state="ended",
+        outcome="completed",
+        model_result={"status": "completed", "result": {"answer": "42"}},
+    )
+    backend.store.task_event(
+        history_task["id"],
+        "model.transcript",
+        {"role": "assistant", "text": "Hello from the assistant."},
+    )
+    for _ in range(1000):
+        backend.store.task_event(history_task["id"], "model.transcript", {"text": ""})
+    backend.store.task_event(
+        history_task["id"],
+        "model.transcript",
+        {"role": "user", "text": "The answer is 42. <img src=x onerror=alert(1)>"},
+    )
+    app = create_app(config, backend, manager)
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
     port = listener.getsockname()[1]
@@ -87,75 +107,52 @@ async def verify(directory):
             errors = []
             page.on("pageerror", lambda error: errors.append(str(error)))
             await page.goto(f"http://127.0.0.1:{port}/api/ui")
-            await expect(page.locator("#login")).to_be_visible()
-            await expect(page.locator("#settings-form")).to_have_count(0)
+            await page.locator("#pin").fill("1111")
+            await page.get_by_role("button", name="登录", exact=True).click()
+            await expect(page.locator("#error")).to_contain_text("PIN 不正确")
             await page.locator("#pin").fill("0123")
             await page.get_by_role("button", name="登录", exact=True).click()
             await expect(page.locator("#device-list")).to_contain_text("Test Android")
-            await page.locator('[data-tab="contacts"]').click()
-            await page.locator("#contact-search button").first.click()
-            await expect(page.locator("#contact-list")).to_contain_text("Test Contact")
-            await page.get_by_role("button", name="用于任务").click()
-            await expect(page.locator('#task-create [name="contact_id"]')).to_have_value("contact1")
-            await page.locator('#task-create [name="goal"]').fill("Browser test only")
-            await page.locator('#task-create [name="background"]').fill("Background")
-            await page.locator('#task-create [name="information"]').fill('{"reference":"test"}')
-            await page.locator('#task-create [name="completion_criteria"]').fill(
-                "Return a test result"
+            await expect(page.get_by_role("tab")).to_have_count(3)
+            await page.get_by_role("tab", name="发起通话").click()
+            await expect(page.locator('#task-create [name="contact_id"] option')).to_have_count(2)
+            await expect(page.locator("#default-background")).to_contain_text("不要朗读任务说明")
+            await page.locator('#task-create [name="contact_id"]').select_option("contact1")
+            await page.locator('#task-create [name="goal"]').fill("Browser contact goal")
+            await page.locator('#task-create [name="language"]').select_option("English")
+            await page.locator('#task-create [name="max_call_seconds"]').fill("120")
+            await page.locator("#start-call").click()
+            await expect(page.locator("#task-status")).to_contain_text("排队中")
+            tasks = [backend.store.task(i) for i in backend.store.task_ids()]
+            created = next(t for t in tasks if t["input"]["goal"] == "Browser contact goal")
+            assert created["input"]["number"] == "12345"
+            assert created["input"]["completion_criteria"] == "Browser contact goal"
+            assert created["input"]["max_call_seconds"] == 120
+            assert created["config"]["language"] == "English"
+            assert created["config"]["options"]["transcription"]
+            await page.locator('#task-create [name="number"]').fill("33333")
+            await expect(page.locator('#task-create [name="contact_id"]')).to_have_value("")
+            await page.locator('#task-create [name="goal"]').fill("Browser number goal")
+            await page.locator("#start-call").click()
+            await expect(page.locator('#task-create [name="goal"]')).to_have_value("")
+            tasks = [backend.store.task(i) for i in backend.store.task_ids()]
+            assert any(t["input"]["number"] == "33333" for t in tasks)
+            assert not any(command.startswith("ATD") for command in phone.commands)
+            await page.get_by_role("tab", name="查看历史").click()
+            row = page.locator("#history-list tr").filter(has_text="History goal")
+            await row.get_by_role("button", name="查看详情").click()
+            await expect(page.locator("#history-result")).to_contain_text('"answer": "42"')
+            await expect(page.locator("#history-transcript")).to_contain_text(
+                "Hello from the assistant."
             )
-            await page.get_by_role("button", name="创建任务", exact=True).click()
-            await expect(page.locator("#task-detail")).to_contain_text('"state": "saved"')
-            await page.locator("#task-search button").click()
-            await expect(page.locator("#task-list")).to_contain_text("12345")
-            await page.locator('#task-control button[value="result"]').click()
-            await expect(page.locator("#task-detail")).to_contain_text('"model_result"')
-            await page.locator('[data-tab="settings"]').click()
-            await expect(page.locator('[name="service_adapter"]')).to_have_value("hci0")
-            for field in ("token_env", "api_key_env", "gemini_api_key_env"):
-                await expect(page.locator(f'[name="service_{field}"]')).to_have_count(0)
-            assert "环境变量" not in await page.locator("#settings").inner_text()
-            await page.locator('#settings-form [name="provider"]').select_option("gemini")
-            await expect(page.locator('#settings-form [name="voice"]')).to_have_value("Aoede")
-            await page.locator('#settings-form [name="language"]').fill("English")
-            await page.locator('#settings-form [name="options"]').fill('{"temperature":0.5}')
-            await page.locator('#settings-form [name="service_answer_timeout_seconds"]').fill("90")
-            await page.get_by_role("button", name="保存配置", exact=True).click()
-            await expect(page.locator("#notice")).to_have_text("配置已保存")
-            assert Config.load(config_path).provider.provider == "gemini"
-            await page.locator('#api-keys [name="openai"]').fill("sk-browser-test")
-            await page.locator('#api-keys [name="gemini"]').fill("gemini-browser-test")
-            await page.get_by_role("button", name="保存 API Key", exact=True).click()
-            await expect(page.locator("#credential-status")).to_contain_text("OpenAI：已配置")
-            await expect(page.locator("#credential-status")).to_contain_text("Gemini：已配置")
-            await expect(page.locator('#api-keys [name="openai"]')).to_have_value("")
-            await expect(page.locator('#api-keys [name="gemini"]')).to_have_value("")
-            await page.locator('[data-tab="events"]').click()
-            await page.locator("#watch").click()
-            await expect(page.locator("#event-output")).to_contain_text("events.ready")
-            backend.emit("verification.probe", value=42)
-            await expect(page.locator("#event-output")).to_contain_text("verification.probe")
-            await page.locator("#stop-watch").click()
-            await page.locator('[data-tab="calls"]').click()
-            await page.locator('#dial [name="number"]').fill("12345")
-            await page.locator("#dial button").first.click()
-            await expect(page.locator("#current-list")).to_contain_text("12345")
-            await phone.send("\r\n+CIEV: 1,1\r\n+CIEV: 2,0\r\n")
-            for _ in range(100):
-                if connection.state == "active":
-                    break
-                await asyncio.sleep(0.01)
-            assert connection.state == "active"
-            await page.locator('#call-control [name="digits"]').fill("12#")
-            await page.locator('#call-control button[value="dtmf"]').click()
-            await expect(page.locator("#notice")).to_have_text("请求已提交")
-            assert any(cmd.startswith("ATD") for cmd in phone.commands)
-            assert "AT+VTS=#" in phone.commands
-            await page.locator('#call-control button[value="hangup"]').click()
-            await expect(page.locator("#notice")).to_have_text("请求已提交")
-            await page.locator('[data-tab="settings"]').click()
-            await page.locator('#credentials [name="pin"]').fill("9876")
-            await page.locator('#credentials [name="confirm"]').fill("9876")
-            await page.get_by_role("button", name="修改 PIN", exact=True).click()
+            await expect(page.locator("#history-transcript")).to_contain_text("The answer is 42.")
+            await expect(page.locator("#history-transcript img")).to_have_count(0)
+            await page.set_viewport_size({"width": 390, "height": 844})
+            assert await page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+            await expect(page.get_by_role("tab")).to_have_count(3)
+            private_write(directory / "pin.env", "AGENTCALL_TOKEN=9876\n")
+            await page.get_by_role("tab", name="连接设备").click()
+            await page.locator("#refresh-devices").click()
             await expect(page.locator("#login")).to_be_visible()
             await page.locator("#pin").fill("9876")
             await page.get_by_role("button", name="登录", exact=True).click()
@@ -167,17 +164,17 @@ async def verify(directory):
                 json.dumps(
                     {
                         "browser": "Chromium",
-                        "mock_phone": True,
-                        "login": True,
-                        "contacts": True,
-                        "task_create": True,
-                        "task_result": True,
-                        "settings_save_reload": True,
-                        "credentials_write_only": True,
-                        "sse": True,
-                        "dial_dtmf_hangup": True,
-                        "pin_rotation": True,
-                        "logout": True,
+                        "three_tabs": True,
+                        "saved_pin_login": True,
+                        "contacts_and_numbers": True,
+                        "goal_is_completion": True,
+                        "language_and_duration": True,
+                        "transcription_enabled": True,
+                        "result_and_paginated_transcript": True,
+                        "transcript_xss_safe": True,
+                        "mobile": True,
+                        "live_pin_change_and_logout": True,
+                        "real_calls": False,
                         "javascript_errors": len(errors),
                     }
                 )

@@ -8,6 +8,8 @@ import pytest
 from agentcall.api import ui
 from agentcall.api.app import create_app
 from agentcall.service.config import Config
+from agentcall.tasks.manager import TaskManager
+from agentcall.tasks.models import DEFAULT_BACKGROUND, TaskInput
 
 CSRF = {"X-AgentCall-CSRF": "1", "Origin": "https://test"}
 
@@ -32,7 +34,7 @@ async def test_ui_gate_session_cookie_logout_and_bearer(service, monkeypatch, tm
         transport=httpx.ASGITransport(app=app), base_url="https://test"
     ) as c:
         page = await c.get("/api/ui")
-        assert 'id="login"' in page.text and 'id="settings-form"' not in page.text
+        assert 'id="login"' in page.text and 'id="task-create"' not in page.text
         assert page.headers["cache-control"] == "no-store"
         assert "frame-ancestors 'none'" in page.headers["content-security-policy"]
         assert (await c.get("/api/settings")).status_code == 401
@@ -45,7 +47,7 @@ async def test_ui_gate_session_cookie_logout_and_bearer(service, monkeypatch, tm
         cookie = response.headers["set-cookie"]
         assert all(flag in cookie.lower() for flag in ("secure", "httponly", "samesite=strict"))
         assert "0123" not in cookie
-        assert 'id="settings-form"' in (await c.get("/api/ui")).text
+        assert 'id="task-create"' in (await c.get("/api/ui")).text
         assert (await c.get("/api/devices")).status_code == 200
         assert (await c.get("/api/docs")).status_code == 200
         assert (await c.post("/api/session/logout", headers=CSRF)).status_code == 200
@@ -88,6 +90,62 @@ async def test_login_rate_limit_shared_with_api(service, monkeypatch, tmp_path):
         assert 'id="login"' in (await c.get("/api/ui")).text
 
 
+async def test_private_pin_file_is_authoritative_and_updates_live(service, monkeypatch, tmp_path):
+    app, config = web_app(service, monkeypatch, tmp_path)
+    path = tmp_path / "pin.env"
+    ui.private_write(path, "AGENTCALL_TOKEN=9876\n")
+    assert config.token == "9876"
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="https://test"
+    ) as c:
+        assert (await login(c)).status_code == 401
+        assert (await login(c, "9876")).status_code == 200
+        ui.private_write(path, "AGENTCALL_TOKEN=4567\n")
+        expired = await c.get("/api/health", headers=CSRF)
+        assert expired.status_code == 401
+        assert expired.headers["www-authenticate"] == "Bearer"
+        assert (await login(c, "9876")).status_code == 401
+        assert (await login(c, "4567")).status_code == 200
+        ui.private_write(path, "AGENTCALL_TOKEN=invalid\n")
+        assert (await c.get("/api/health")).status_code == 401
+        assert (await login(c)).status_code == 401
+
+
+async def test_history_links_calls_once_includes_failed_tasks_and_paginates(
+    service, monkeypatch, tmp_path
+):
+    app, config = web_app(service, monkeypatch, tmp_path)
+    backend = service[0]
+    store = backend.store
+    manager = TaskManager(backend, config)
+    device = "/org/bluez/hci0/dev_11_22_33_44_55_66"
+    task = manager.create(TaskInput(device=device, number="12345", goal="test goal"))
+    linked = store.new_call(device, "12345", "outgoing", "ended")
+    store.update_task(task["id"], call_id=linked, state="ended", outcome="completed")
+    failed = manager.create(TaskInput(device=device, number="54321", goal="failed task"))
+    store.update_task(failed["id"], state="ended", outcome="incomplete", error={"message": "test"})
+    manual = store.new_call(device, "55555", "outgoing", "ended")
+    store.save_phonebook(
+        device,
+        None,
+        [{"id": "pbap1", "number": "11111", "synced_at": "2026-10-06T00:00:00+00:00"}],
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="https://test"
+    ) as c:
+        assert (await c.get("/api/history")).status_code == 401
+        await login(c)
+        rows = (await c.get("/api/history")).json()
+        assert len(rows) == 4
+        assert sum(row["call"] is not None and row["call"]["id"] == linked for row in rows) == 1
+        assert {row["id"] for row in rows} == {task["id"], failed["id"], manual, "pbap1"}
+        assert rows == sorted(rows, key=lambda row: row["recorded_at"], reverse=True)
+        first = (await c.get("/api/history?limit=2")).json()
+        second = (await c.get("/api/history?limit=2&offset=2")).json()
+        assert first + second == rows
+        assert (await c.get("/api/history?device=dev_22_22_33_44_55_66")).json() == []
+
+
 async def test_settings_persist_reload_and_apply_defaults(service, monkeypatch, tmp_path):
     app, config = web_app(service, monkeypatch, tmp_path)
     async with httpx.AsyncClient(
@@ -124,6 +182,7 @@ async def test_settings_persist_reload_and_apply_defaults(service, monkeypatch, 
         )
         assert task.status_code == 201
         assert task.json()["config"]["provider"] == "gemini"
+        assert task.json()["input"]["background"] == DEFAULT_BACKGROUND
         assert task.json()["state"] == "saved"
         assert not any(cmd.startswith("ATD") for cmd in service[2].commands)
 

@@ -15,6 +15,7 @@
 | 联系人查询 | `GET /contacts?q=...&device=...` | 包含所属手机与原始 vCard |
 | 拨号 | `POST /calls` | `{"device":"AA:BB:CC:DD:EE:FF","number":"+123"}` 或以 `contact_id` 替代 number |
 | 项目记录 + 手机历史 | `GET /calls` | source 分别为 project / pbap |
+| 合并历史 | `GET /history` | 按设备、limit / offset 分页，按时间倒序合并任务、项目通话和手机历史，关联通话只展示一次 |
 | 当前通话 | `GET /calls/current` | 以项目 call ID 操作 |
 | 通话详情 | `GET /calls/{id}` | 实际状态、开始 / 接通 / 结束时间、原因、音频指标 |
 | 接听 / 挂断 | `POST /calls/{id}/answer`、`.../hangup` | accepted 表示 AT 成功，实际状态仍由手机指示器确认 |
@@ -86,3 +87,5 @@ curl -H "Authorization: Bearer $AGENTCALL_TOKEN" \
 ```
 
 401 返回 WWW-Authenticate: Bearer（PIN 模式为 Basic）；业务 HTTP、SSE、OpenAPI / docs 和音频 WebSocket 均受认证保护。OpenAI / Gemini 凭据不返回客户端。认证后可读写非秘密服务配置，见 [网页设置与会话 API](web-ui.md)。真实 API 和真机兼容性验收边界见 checkpoint 验证记录。
+
+通话背景由后台永久提供，API 创建任务无需填写 `background`；该字段可用于附加资料，空值或自定义内容不会替换固定通话说明。PIN 即 API token，Bearer / Basic 客户端不需要先登录或换取其他 token。

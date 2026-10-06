@@ -134,6 +134,31 @@ class Store:
                 return result
         return None
 
+    def history(self, device=None, limit=50, offset=0):
+        rows = self.db.execute(
+            "SELECT * FROM ("
+            "SELECT 'task' AS type,t.id,t.device,'project' AS source,"
+            "COALESCE(c.started_at,t.started_at,t.created_at) AS recorded_at "
+            "FROM tasks t LEFT JOIN calls c ON c.id=t.call_id "
+            "UNION ALL SELECT 'call',c.id,c.device,c.source,c.started_at FROM calls c "
+            "WHERE NOT EXISTS (SELECT 1 FROM tasks t WHERE t.call_id=c.id) "
+            "UNION ALL SELECT 'call',id,device,'pbap',json_extract(data,'$.synced_at') "
+            "FROM phone_history) WHERE (? IS NULL OR device=?) "
+            "ORDER BY recorded_at DESC,type,id LIMIT ? OFFSET ?",
+            (device, device, limit, offset),
+        ).fetchall()
+        result = []
+        for row in rows:
+            task = self.task(row["id"]) if row["type"] == "task" else None
+            result.append(
+                {
+                    **dict(row),
+                    "task": task,
+                    "call": task["call"] if task else self.call_record(row["id"], row["source"]),
+                }
+            )
+        return result
+
     def contacts(self, query="", device=None, limit=None, offset=0):
         return [
             dict(r)

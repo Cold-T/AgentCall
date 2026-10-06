@@ -30,6 +30,22 @@ class Config:
 
     @property
     def token(self):
+        source = getattr(self, "source", None)
+        if self.pin_auth and source:
+            path = source.parent / "pin.env"
+            if path.exists():
+                try:
+                    values = [
+                        line.partition("=")[2]
+                        for line in path.read_text().splitlines()
+                        if line.partition("=")[0] == self.token_env
+                    ]
+                except (OSError, UnicodeError):
+                    return ""
+                if len(values) != 1:
+                    return ""
+                pin = values[0]
+                return pin if pin.isascii() and pin.isdigit() and len(pin) == 4 else ""
         return os.environ.get(self.token_env, "")
 
     @classmethod

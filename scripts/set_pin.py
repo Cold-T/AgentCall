@@ -21,7 +21,7 @@ def main():
         os.replace(name, directory / "pin.env")
     finally:
         Path(name).unlink(missing_ok=True)
-    print("PIN saved privately. Restart the AgentCall service to apply it.")
+    print("PIN saved privately. The configured service reloads it on the next request.")
 
 
 if __name__ == "__main__":

@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from agentcall.api.auth import authorized
 from agentcall.service.config import Config
+from agentcall.tasks.models import DEFAULT_BACKGROUND
 
 COOKIE = "agentcall_session"
 WEB = Path(__file__).with_name("web")
@@ -110,7 +111,11 @@ def install_ui(app, config, sessions, check_auth):
     async def ui(request: Request):
         authenticated = sessions.valid(request)
         page = (WEB / ("index.html" if authenticated else "login.html")).read_text()
-        return HTMLResponse(page.replace("__API_BASE__", escape(config.root_path, quote=True)))
+        return HTMLResponse(
+            page.replace("__API_BASE__", escape(config.root_path, quote=True)).replace(
+                "__DEFAULT_BACKGROUND__", escape(DEFAULT_BACKGROUND)
+            )
+        )
 
     @router.get("/ui/assets/{name}", include_in_schema=False)
     async def asset(name: str):

@@ -14,7 +14,7 @@ cd ~/AgentCall
 .venv/bin/python scripts/set_pin.py
 ```
 
-输入并确认 4 位数字，不回显，不进入 shell 历史。脚本原子写入用户私有的 `~/.config/agentcall/pin.env`，权限 0600；不把 PIN 写进配置或 Git。该文件由 systemd 用户服务加载。重新运行脚本并执行 `systemctl --user restart agentcall` 可轮换 PIN；重启会结束现有后台会话，通话期间不执行。
+输入并确认 4 位数字，不回显，不进入 shell 历史。脚本原子写入用户私有的 `~/.config/agentcall/pin.env`，权限 0600；不把 PIN 写进配置或 Git。该文件由服务读取，并由 systemd 用户服务在启动时加载。重新运行脚本即可轮换 PIN，下次认证请求自动生效，网页会话失效；无需为修改 PIN 重启服务。
 
 PIN 严格使用 4 个 ASCII 数字，支持前导零；启动、设置接口和网页表单使用相同长度约束。当前部署已生成新的随机 4 位 PIN，保存在上述私有文件中，旧的 6 位 PIN 已失效。
 

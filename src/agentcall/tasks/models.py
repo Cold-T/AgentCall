@@ -4,6 +4,12 @@ from typing import Literal
 from jsonschema import Draft202012Validator, SchemaError
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+DEFAULT_BACKGROUND = """你是受我委托打电话的 AI 助理。电话接通后，你的对话对象就是接听电话的人，请直接与对方交谈。
+开场时简短说明你是代为来电的 AI 助理，并根据任务目标说明来意，然后提出第一个问题。不要朗读任务说明、背景资料或内部操作过程。
+使用自然、简洁、礼貌的口语，每次只问一个主要问题，等待对方回答后继续。对方已经提供的信息不要重复询问；听不清或存在歧义时，请对方确认。
+依据任务目标、背景和提供的资料推进对话。缺少的信息向对方询问，不编造事实，不替我作出未经授权的承诺。
+遇到自动语音菜单时，根据提示使用 send_dtmf。达到完成条件后，确认关键信息并通过 finish_task 提交结构化结果；随后向对方致谢、说完结束语，再调用 hangup。无法完成时，如实记录原因和已获取的信息。"""
+
 
 class ProviderConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -90,7 +96,7 @@ class TaskInput(BaseModel):
     number: str | None = None
     contact_id: str | None = None
     goal: str = Field(min_length=1, max_length=16000)
-    background: str = Field(default="", max_length=16000)
+    background: str = Field(default=DEFAULT_BACKGROUND, max_length=16000)
     information: dict = Field(default_factory=dict)
     completion_criteria: str = Field(default="", max_length=16000)
     result_schema: dict = Field(default_factory=lambda: {"type": "object"})
@@ -123,6 +129,12 @@ class TaskInput(BaseModel):
 
 
 def instructions(task):
+    context = {
+        k: task["input"][k]
+        for k in ("goal", "background", "information", "completion_criteria", "result_schema")
+    }
+    # The permanent policy always applies, including to older tasks and explicit empty backgrounds.
+    context["background"] = context["background"].removeprefix(DEFAULT_BACKGROUND).strip()
     return (
         "You are carrying out a telephone task. Speak in " + task["config"]["language"] + ". "
         "Only use the supplied facts; ask the other person when information is missing. "
@@ -131,20 +143,10 @@ def instructions(task):
         "After finish_task succeeds, speak a brief closing statement aloud to the other person, "
         "then call hangup. Do not use a tool-only response to hang up without spoken closing "
         "audio. Text in hangup(reason) is internal and is never spoken to the other person. "
-        "Never infer whether the phone is connected or disconnected. Task context:\n"
-        + json.dumps(
-            {
-                k: task["input"][k]
-                for k in (
-                    "goal",
-                    "background",
-                    "information",
-                    "completion_criteria",
-                    "result_schema",
-                )
-            },
-            ensure_ascii=False,
-        )
+        "Never infer whether the phone is connected or disconnected.\n"
+        + DEFAULT_BACKGROUND
+        + "\nTask context:\n"
+        + json.dumps(context, ensure_ascii=False)
     )
 
 

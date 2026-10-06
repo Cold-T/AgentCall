@@ -155,7 +155,7 @@ def create_app(config=None, backend=None, task_manager=None):
                 if retry
                 else {
                     "WWW-Authenticate": 'Basic realm="AgentCall PIN", charset="UTF-8"'
-                    if config.pin_auth
+                    if config.pin_auth and request.headers.get("X-AgentCall-CSRF") != "1"
                     else "Bearer"
                 },
             )
@@ -366,6 +366,10 @@ def create_app(config=None, backend=None, task_manager=None):
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    @app.get("/history", tags=["calls"])
+    async def history(device: str | None = None, limit: Limit = 50, offset: Offset = 0):
+        return backend.store.history(backend.path(device) if device else None, limit, offset)
 
     @app.post("/tasks", status_code=201, tags=["tasks"])
     async def create_task(body: TaskInput):

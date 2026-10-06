@@ -20,7 +20,30 @@ from agentcall.service.backend import Backend
 from agentcall.service.config import Config
 from agentcall.storage.store import Store
 from agentcall.tasks.manager import TaskManager
-from agentcall.tasks.models import ProviderConfig
+from agentcall.tasks.models import DEFAULT_BACKGROUND, ProviderConfig, TaskInput, instructions
+
+
+@pytest.mark.parametrize("background", [None, "", "The office reference is ABC."])
+def test_permanent_background_applies_without_client_instructions(background):
+    body = {"device": DEVICE, "number": "12345", "goal": "Confirm office hours"}
+    if background is not None:
+        body["background"] = background
+    task = TaskInput(**body)
+    prompt = instructions({"input": task.model_dump(), "config": {"language": "English"}})
+    assert DEFAULT_BACKGROUND in prompt
+    assert "Confirm office hours" in prompt
+    if background:
+        assert background in prompt
+    else:
+        assert task.background == (DEFAULT_BACKGROUND if background is None else "")
+
+
+def test_permanent_background_is_not_duplicated_by_legacy_ui_requests():
+    task = TaskInput(
+        device=DEVICE, number="12345", goal="Confirm hours", background=DEFAULT_BACKGROUND
+    )
+    prompt = instructions({"input": task.model_dump(), "config": {"language": "中文"}})
+    assert prompt.count(DEFAULT_BACKGROUND) == 1
 
 
 async def wait_for(predicate, seconds=4):

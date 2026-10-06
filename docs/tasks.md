@@ -35,3 +35,7 @@ phone --json task show TASK_ID
 软件测试使用模拟手机 AG、真实本地 WebSocket 和 SCO socket，验证协议、音频和任务闭环；这不证明 OpenAI 云端或手机兼容性。按用户约定，真实 OpenAI API 验证保留待执行，Android / iPhone SIM 通话验收统一在 CP6。
 
 配置密钥后，可先运行 `.venv/bin/python scripts/verify_openai.py`。该命令实际访问 API（会产生用量），确认会话配置、PCM 输入和音频输出，不拨号。可用 `AGENTCALL_OPENAI_MODEL` 覆盖模型；可用模型取决于账户权限。它不能替代真机任务验收。
+
+## 固定通话背景
+
+服务永久提供委托 AI 助理的完整通话说明，适用于 OpenAI 与 Gemini，也适用于已有任务。`POST /tasks` 可省略 `background`；省略时任务记录保存默认背景，显式空背景或自定义背景也不会移除固定说明。`background` 只用于额外的通话事实或资料。固定说明包含身份与来意开场、直接与接听者交谈、自然礼貌且每次一个主要问题、不朗读内部资料、不编造事实或擅自承诺、电话菜单 DTMF、提交结构化结果、致谢说完结束语后再挂断。
