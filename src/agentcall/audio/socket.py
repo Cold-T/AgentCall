@@ -1,9 +1,8 @@
 """Adapted libc SCO connector from handsfree-linux; see vendor license."""
 
 import asyncio
-import errno
-
 import ctypes as _ct
+import errno
 import logging
 import struct as _struct
 
