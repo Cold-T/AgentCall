@@ -35,6 +35,7 @@ class SCOAudio:
         self.playout_until = 0.0
         self.output_generation = 0
         self.recorder = None
+        self.prefetched_pcm = None
         log.info(
             "SCO ready: input/output=s16le mono %sHz codec=%s mtu=%s", self.rate, codec, self.mtu
         )
@@ -52,7 +53,17 @@ class SCOAudio:
             "tx_bytes": self.tx_bytes,
         }
 
+    async def prime(self):
+        """Verify the answered call can receive PCM, retaining its first packet."""
+        if self.prefetched_pcm is None:
+            self.prefetched_pcm = await self.receive()
+
     async def receive(self):
+        if self.prefetched_pcm is not None:
+            pcm, self.prefetched_pcm = self.prefetched_pcm, None
+            if self.recorder:
+                self.recorder.write(0, pcm)
+            return pcm
         while not self.closed:
             if self.codec == 2:
                 # Drain all complete buffered frames before waiting for another SCO packet.

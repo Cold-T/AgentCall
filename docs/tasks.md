@@ -76,3 +76,5 @@ phone --json task show TASK_ID
 本机以 Hands-Free UUID `0000111e-0000-1000-8000-00805f9b34fb` 注册 BlueZ profile，保留默认的客户端与服务端能力。不要限制为 `Role=client`：该设置会关闭本机 SDP 免提服务发布及接收手机 RFCOMM 连接的监听，虽能主动连接手机控制通道，手机却无法发现本机的免提服务。依据 [BlueZ profile 实现](https://github.com/bluez/bluez/blob/master/src/profile.c)，注册后应在适配器 UUID 列表看到 Hands-Free 服务。
 
 SCO 监听在响铃期间保持等待，不以固定 20 次监听轮询提前结束。接通后才开始计算配置的音频建立时限，并尝试主动连接 SCO。连接失败事件 `audio.connect_failed` 保存系统 errno 与失败阶段，便于区分拒绝、控制器错误和超时。`hfp_ready` 只表示控制通道握手成功；实际通话音频还需要 SCO 就绪。服务发布及模拟测试通过并不证明 iPhone 已选择蓝牙音频路由，仍需用户在手机音频列表确认，并在授权的通话中验证声音。
+
+接通后的任务音频就绪判定还必须成功读取首包 PCM；仅有响铃阶段的 SCO socket 不够。首包会保留给输入桥接及录音，不重复计数。若首读收到连接重置或 EOF，记录 `task.audio_reconnecting`，在原音频就绪时限内替换 SCO 连接，保持同一次通话，不重新拨号。收到可用音频后才开始模型对话，仍保留开场 1 秒静默。重建持续失败、超过音频或最长通话时限、取消、手机已结束等情况正常退出；已经开始对话后的音频故障仍保留失败记录。

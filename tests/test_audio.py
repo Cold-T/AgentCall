@@ -85,3 +85,21 @@ async def test_coalesced_msbc_frames_are_returned_without_waiting_for_next_packe
         audio.close()
         encoder.close()
         peer.close()
+
+
+async def test_audio_prime_retains_first_pcm_and_counts_it_once():
+    from types import SimpleNamespace
+
+    host, peer = socket.socketpair(type=socket.SOCK_SEQPACKET)
+    audio = SCOAudio(host, 1, mtu=48)
+    received = []
+    try:
+        peer.send(b"\x03\x04" * 9)
+        await audio.prime()
+        assert audio.rx_bytes == 18
+        audio.recorder = SimpleNamespace(write=lambda channel, pcm: received.append((channel, pcm)))
+        assert await audio.receive() == b"\x03\x04" * 9
+        assert audio.rx_bytes == 18 and received == [(0, b"\x03\x04" * 9)]
+    finally:
+        audio.close()
+        peer.close()

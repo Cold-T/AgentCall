@@ -886,3 +886,46 @@ async def test_explicit_completion_and_provider_options_remain_overrides(rig):
     for name, value in options.items():
         assert task["config"]["options"][name] == value
     assert not any(command.startswith("ATD") for command in rig.phone.commands)
+
+
+async def test_reset_ringing_sco_is_replaced_before_speaking_without_redial(rig, monkeypatch):
+    setup = rig.setup_audio
+    attempts = []
+
+    def ringing_socket(device):
+        if device in rig.backend.audio:
+            return
+        attempts.append(device)
+        if len(attempts) == 1:
+            host, peer = socket.socketpair(type=socket.SOCK_SEQPACKET)
+            rig.backend.audio[device] = SCOAudio(host, 1, mtu=48)
+            peer.close()
+        else:
+            setup(device)
+
+    monkeypatch.setattr(rig.backend, "ensure_audio", ringing_socket)
+    task_id = await create_start(rig)
+    result = await completed(rig, task_id)
+    assert result["outcome"] == "completed" and result["error"] is None
+    assert len(attempts) == 2
+    assert sum(command.startswith("ATD") for command in rig.phone.commands) == 1
+    assert rig.phone.commands.count("AT+CHUP") == 1
+    events = rig.store.task_events(task_id)
+    assert any(event["kind"] == "task.audio_reconnecting" for event in events)
+    assert rig.output
+
+
+async def test_reset_audio_retry_is_bounded_and_does_not_redial(rig, monkeypatch):
+    def dead_audio(device):
+        if device in rig.backend.audio:
+            return
+        host, peer = socket.socketpair(type=socket.SOCK_SEQPACKET)
+        rig.backend.audio[device] = SCOAudio(host, 1, mtu=48)
+        peer.close()
+
+    monkeypatch.setattr(rig.backend, "ensure_audio", dead_audio)
+    task_id = await create_start(rig)
+    result = await completed(rig, task_id)
+    assert result["outcome"] == "audio_failed"
+    assert sum(command.startswith("ATD") for command in rig.phone.commands) == 1
+    assert not rig.output

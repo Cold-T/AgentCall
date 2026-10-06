@@ -273,6 +273,26 @@ class TaskRun:
                 if audio.owner:
                     raise TaskFailure("audio_failed", "SCO audio is owned by another client")
                 audio.owner = True
+                remaining = min(deadline, self.call_deadline) - asyncio.get_running_loop().time()
+                try:
+                    await asyncio.wait_for(audio.prime(), max(0, remaining))
+                except TimeoutError as exc:
+                    if asyncio.get_running_loop().time() >= self.call_deadline:
+                        raise TaskFailure(
+                            "timeout", "maximum call duration exceeded waiting for audio"
+                        ) from exc
+                    raise TaskFailure(
+                        "audio_failed", "SCO received no PCM before audio readiness deadline"
+                    ) from exc
+                except (OSError, ConnectionError) as exc:
+                    # The ringing SCO socket can be reset when the phone answers.
+                    # Recover within this call's original audio deadline before speaking.
+                    audio.owner = False
+                    self.manager.event(self.id, "task.audio_reconnecting", error=str(exc))
+                    self.backend.stop_audio(self.device)
+                    self.backend.ensure_audio(self.device)
+                    await asyncio.sleep(0.02)
+                    continue
                 return audio
             if asyncio.get_running_loop().time() >= deadline:
                 raise TaskFailure("audio_failed", "SCO audio readiness timeout")
