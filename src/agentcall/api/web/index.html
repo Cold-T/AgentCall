@@ -28,6 +28,7 @@
 <label>电话号码<input name="number" type="tel" maxlength="64" placeholder="手动输入电话号码" pattern="\+?[0-9*#]{1,64}"></label>
 <label>最长通话秒数<input name="max_call_seconds" type="number" min="1" max="3600" step="1" value="300" required></label>
 <label>模型<select name="model" required><option value="">正在读取模型…</option></select></label>
+<label>声音<select name="voice" required><option value="">正在读取声音…</option></select><span class="small">用于本次新通话。</span></label>
 <label>语言<select name="language" required><option value="中文">中文（普通话）</option><option value="粤语">粤语</option><option value="English">English</option><option value="日本語">日本語</option><option value="한국어">한국어</option><option value="Español">Español</option><option value="Français">Français</option><option value="Deutsch">Deutsch</option></select></label>
 <label class="wide">目标<textarea name="goal" maxlength="16000" placeholder="说明希望这通电话达成的目标" required></textarea><span class="small">目标同时作为任务完成条件。</span></label>
 <label class="wide">固定通话说明<textarea id="default-background" rows="12" readonly>__DEFAULT_BACKGROUND__</textarea><span class="small">由后台永久提供，API 调用无需填写。</span></label>

@@ -4,6 +4,8 @@ const $ = selector => document.querySelector(selector);
 const enc = encodeURIComponent;
 const form = $('#task-create');
 let models = [];
+const voices = {openai:['marin','cedar','alloy','ash','ballad','coral','echo','sage','shimmer','verse'], gemini:['Aoede','Puck','Charon','Kore','Fenrir','Zephyr','Leda','Orus']};
+const chosenVoices = new Map();
 let activeTask;
 let historyOffset = 0;
 let contactsRequest = 0;
@@ -127,6 +129,21 @@ form.elements.device.onchange = () => { form.elements.contact_id.value = ''; run
 form.elements.contact_id.onchange = () => { if (form.elements.contact_id.value) form.elements.number.value = ''; };
 form.elements.number.oninput = () => { if (form.elements.number.value) form.elements.contact_id.value = ''; };
 $('#refresh-contacts').onclick = () => run(refreshContacts, $('#refresh-contacts'));
+function loadVoices() {
+  const model = form.elements.model.value ? models[Number(form.elements.model.value)] : null;
+  const select = form.elements.voice; select.replaceChildren();
+  if (!model) { select.add(new Option('请先选择模型', '')); select.disabled = true; return; }
+  select.disabled = false;
+  const available = [...new Set([...(voices[model.provider] || []), model.voice].filter(Boolean))];
+  for (const voice of available) select.add(new Option(voice + (voice === model.voice ? '（默认）' : ''), voice));
+  const preferred = chosenVoices.get(model.provider) || model.voice;
+  select.value = available.includes(preferred) ? preferred : available[0];
+}
+form.elements.model.onchange = loadVoices;
+form.elements.voice.onchange = () => {
+  const model = form.elements.model.value ? models[Number(form.elements.model.value)] : null;
+  if (model) chosenVoices.set(model.provider, form.elements.voice.value);
+};
 async function loadModels() {
   const data = await api('/settings'); const active = data.active.provider;
   models = [
@@ -141,6 +158,7 @@ async function loadModels() {
   }
   const selected = models.findIndex(model => model.provider === active.provider && data.credentials[model.provider]);
   form.elements.model.value = String(selected >= 0 ? selected : models.findIndex(model => data.credentials[model.provider]));
+  loadVoices();
   $('#start-call').disabled = !models.some(model => data.credentials[model.provider]);
   $('#model-status').textContent = '双方对话转写会自动启用，可在历史详情查看。' + (data.credentials.gemini ? '' : ' Gemini 尚未配置 API Key。');
 }
@@ -151,13 +169,14 @@ form.onsubmit = event => {
     if (!data.contact_id && !data.number.trim()) throw new Error('请选择联系人或输入电话号码。');
     const selected = models[Number(data.model)];
     if (!selected || !data.model) throw new Error('请选择可用模型。');
+    if (!data.voice) throw new Error('请选择声音。');
     const goal = data.goal.trim();
     if (!goal) throw new Error('请填写通话目标。');
     const options = {...selected.options, ...(selected.provider === 'openai' ? {transcription:selected.options?.transcription || {model:'gpt-4o-mini-transcribe'}} : {inputAudioTranscription:{}, outputAudioTranscription:{}})};
     const body = {
       device:data.device, ...(data.contact_id ? {contact_id:data.contact_id} : {number:data.number.trim()}),
       max_call_seconds:Number(data.max_call_seconds), goal, completion_criteria:goal, ...(data.background.trim() ? {background:data.background} : {}),
-      config:{provider:selected.provider, model:selected.model, voice:selected.voice, language:data.language, options},
+      config:{provider:selected.provider, model:selected.model, voice:data.voice, language:data.language, options},
       start_immediately:true
     };
     const task = await api('/tasks', 'POST', body); activeTask = task.id;
@@ -226,7 +245,7 @@ async function historyDetail(row) {
     }
   }
   $('#recording-status').textContent = task?.downloads?.recording ? '录音：左声道为对方，右声道为 AI 助理。' : task && task.state !== 'ended' ? '录音在通话结束后可下载。' : '该通话没有已保存的录音。录音功能启用后的新 AI 通话会自动保存。';
-  const fields = [['号码',call?.number || task?.input.number], ['目标',task?.input.goal], ['状态',status(task?.outcome || task?.state || call?.state)], ['开始时间',time(call?.started_at || task?.started_at || task?.created_at)], ['结束时间',time(call?.ended_at || task?.ended_at)], ['结束原因',call?.end_reason], ['模型',task?.config.model], ['语言',task?.config.language]];
+  const fields = [['号码',call?.number || task?.input.number], ['目标',task?.input.goal], ['状态',status(task?.outcome || task?.state || call?.state)], ['开始时间',time(call?.started_at || task?.started_at || task?.created_at)], ['结束时间',time(call?.ended_at || task?.ended_at)], ['结束原因',call?.end_reason], ['模型',task?.config.model], ['声音',task?.config.voice], ['语言',task?.config.language]];
   for (const [label,value] of fields) {
     if (value == null) continue;
     const dt = document.createElement('dt'); dt.textContent = label;

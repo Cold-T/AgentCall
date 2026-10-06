@@ -33,7 +33,7 @@ async def verify(directory):
     config_path.write_text('[service]\npin_auth=true\nroot_path="/api"\n')
     os.environ["AGENTCALL_TOKEN"] = "1111"  # Deliberately stale startup credential.
     os.environ["OPENAI_API_KEY"] = "test-only"
-    os.environ.pop("GEMINI_API_KEY", None)
+    os.environ["GEMINI_API_KEY"] = "test-only"
     private_write(directory / "pin.env", "AGENTCALL_TOKEN=0123\n")
     config = Config.load(config_path)
     backend = Backend(config, Store(":memory:"))
@@ -147,6 +147,14 @@ async def verify(directory):
             await page.get_by_role("tab", name="发起通话").click()
             await expect(page.locator('#task-create [name="contact_id"] option')).to_have_count(2)
             await expect(page.locator("#default-background")).to_contain_text("不要朗读任务说明")
+            await expect(page.locator('#task-create [name="voice"]')).to_have_value("marin")
+            await expect(page.locator('#task-create [name="voice"] option')).to_have_count(10)
+            await page.locator('#task-create [name="voice"]').select_option("cedar")
+            await page.locator('#task-create [name="model"]').select_option("1")
+            await expect(page.locator('#task-create [name="voice"]')).to_have_value("Aoede")
+            await page.locator('#task-create [name="voice"]').select_option("Puck")
+            await page.locator('#task-create [name="model"]').select_option("0")
+            await expect(page.locator('#task-create [name="voice"]')).to_have_value("cedar")
             await page.locator('#task-create [name="contact_id"]').select_option("contact1")
             await page.locator('#task-create [name="goal"]').fill("Browser contact goal")
             await page.locator('#task-create [name="language"]').select_option("English")
@@ -159,6 +167,7 @@ async def verify(directory):
             assert created["input"]["completion_criteria"] == "Browser contact goal"
             assert created["input"]["max_call_seconds"] == 120
             assert created["config"]["language"] == "English"
+            assert created["config"]["voice"] == "cedar"
             assert created["config"]["options"]["transcription"]
             await page.locator('#task-create [name="number"]').fill("33333")
             await expect(page.locator('#task-create [name="contact_id"]')).to_have_value("")
@@ -222,6 +231,7 @@ async def verify(directory):
                         "contacts_and_numbers": True,
                         "goal_is_completion": True,
                         "language_and_duration": True,
+                        "voice_selection_and_provider_switch": True,
                         "transcription_enabled": True,
                         "result_and_paginated_transcript": True,
                         "transcript_xss_safe": True,

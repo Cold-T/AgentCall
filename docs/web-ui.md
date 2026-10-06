@@ -60,3 +60,7 @@ python scripts/verify_web_ui.py
 总结只依据保存的记录区分目标达成、接听者确认、AI 自述和真实通话状态，缺失或矛盾会提示未确认。它是便于阅读的模型总结，原始结果和转写保留供核对。
 
 2026-10-06 验证：185 项 pytest、Ruff、格式与 JavaScript 语法检查通过；Chromium 验证结果总结、模型标签和外部文本安全展示。部署后通过公网为一条已有的已结束 AI 通话实际生成 GPT-5.6 Luna 总结，确认缓存和任务详情读回一致，未拨号。
+
+## 选择声音
+
+发起通话表单新增声音下拉框，默认选中服务配置的声音，按当前 provider 切换可选列表。OpenAI Realtime 提供 marin、cedar、alloy、ash、ballad、coral、echo、sage、shimmer、verse（[官方声音说明](https://developers.openai.com/api/docs/guides/realtime-conversations#voice-options)）；Gemini 提供常用预设 Aoede、Puck、Charon、Kore、Fenrir、Zephyr、Leda、Orus（[Live API 声音说明](https://ai.google.dev/gemini-api/docs/live-api/capabilities#change-voice-and-language)）。服务已有自定义默认声音也保留为选项。页面会分别记住这次打开期间每家 provider 的声音选择，提交为任务的 `config.voice`，历史详情显示实际保存的声音。修改只影响新建通话，不修改运行中的会话或服务默认设置。
