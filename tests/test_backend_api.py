@@ -188,3 +188,31 @@ async def test_bluez_startup_failure_recovers_without_dial(monkeypatch):
     finally:
         await backend.close()
         store.close()
+
+
+async def test_unpair_removes_only_selected_bond_and_reconnect(service):
+    backend, connection, phone, client, calls = service
+    other = "/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF"
+    backend.store.reconnect(DEVICE, True)
+    backend.store.reconnect(other, True)
+    backend.store.save_device(DEVICE, {"paired": True, "connected": True, "hfp_ready": True})
+    response = await client.post("/devices/11:22:33:44:55:66/unpair")
+    assert response.status_code == 200
+    assert calls[-1][0][2:] == ("RemoveDevice", "o", [DEVICE])
+    assert backend.store.intents() == [other]
+    assert connection.closed
+    snapshot = next(row for row in backend.store.saved_devices() if row["device"] == DEVICE)
+    assert not snapshot["last_observed"]["paired"]
+    assert not snapshot["last_observed"]["hfp_ready"]
+    assert not any(command.startswith("ATD") for command in phone.commands)
+
+
+async def test_unpair_rejects_active_phone_without_changing_reconnect(service):
+    backend, _, _, client, calls = service
+    backend.store.reconnect(DEVICE, True)
+    backend.claims[DEVICE] = "active-task"
+    before = len(calls)
+    response = await client.post("/devices/11:22:33:44:55:66/unpair")
+    assert response.status_code == 409
+    assert backend.store.intents() == [DEVICE]
+    assert len(calls) == before

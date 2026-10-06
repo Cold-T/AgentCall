@@ -78,7 +78,8 @@ async function refreshDevices() {
   const devices = await api('/devices');
   table('#device-list', devices.map(row => ({...row, bluetooth:row.connected ? '已连接' : '未连接', phone:row.hfp_ready ? '可通话' : '未就绪'})), [['name','设备'], ['address','地址'], ['bluetooth','蓝牙'], ['phone','通话状态']], row => {
     const id = row.id || row.path.split('/').pop();
-    return [['pair','配对'], ['connect','连接'], ['disconnect','断开'], ['sync','同步联系人与历史']].map(([action,label]) => [label, async () => {
+    return [['pair','配对'], ['connect','连接'], ['disconnect','断开'], ['unpair','取消配对'], ['sync','同步联系人与历史']].map(([action,label]) => [label, async () => {
+      if (action === 'unpair' && !window.confirm('取消与 ' + (row.name || row.address || id) + ' 的配对？这会断开连接并清除自动重连，需要重新配对才能使用。')) return;
       await api(`/devices/${enc(id)}/${action}`, 'POST'); notice(label + '请求已完成'); await refreshDevices();
     }]);
   });

@@ -261,6 +261,29 @@ class Backend:
         elif action == "connect":
             self.store.reconnect(path, True)
             await self.bluez.call(path, "org.bluez.Device1", "ConnectProfile", "s", [AG_UUID])
+        elif action == "unpair":
+            if path in self.current or path in self.claims:
+                raise HFPError("cannot unpair a phone with an active call or task")
+            self.store.reconnect(path, False)
+            agent = self.bluez.agent
+            for request_id, details in list(getattr(agent, "details", {}).items()):
+                if details["device"] == path:
+                    future = agent.pending.get(request_id)
+                    if future and not future.done():
+                        future.set_result(False)
+            await self.bluez.call(
+                f"/org/bluez/{self.config.adapter}",
+                "org.bluez.Adapter1",
+                "RemoveDevice",
+                "o",
+                [path],
+            )
+            connection = self.connections.get(path)
+            if connection:
+                await connection.close()
+            self.store.save_device(
+                path, {"paired": False, "connected": False, "hfp_ready": False, "reconnect": False}
+            )
         elif action == "disconnect":
             self.store.reconnect(path, False)
             await self.bluez.call(path, "org.bluez.Device1", "Disconnect")

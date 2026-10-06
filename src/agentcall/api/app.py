@@ -263,7 +263,9 @@ def create_app(config=None, backend=None, task_manager=None):
         return await backend.sync(device)
 
     @app.post("/devices/{device}/{action}", tags=["devices"])
-    async def device_action(device: str, action: Literal["pair", "connect", "disconnect"]):
+    async def device_action(
+        device: str, action: Literal["pair", "connect", "disconnect", "unpair"]
+    ):
         return await backend.device_action(device, action)
 
     @app.get("/contacts", tags=["contacts"])
