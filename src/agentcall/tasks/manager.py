@@ -14,6 +14,7 @@ from agentcall.providers.gemini import GeminiLive
 from agentcall.providers.openai import OpenAIRealtime
 from agentcall.storage.store import now
 from agentcall.tasks.models import TOOLS, ProviderConfig, TaskInput, instructions
+from agentcall.tasks.summary import TaskSummarizer
 from agentcall.vendor import at
 
 
@@ -29,6 +30,7 @@ class TaskManager:
         self.config = config
         self.store = backend.store
         self.store.init_tasks()
+        self.summaries = TaskSummarizer(self.store, config)
         self.factory = provider_factory or self.make_provider
         self.runs = {}
         self.scheduler = None
@@ -163,6 +165,7 @@ class TaskManager:
             run.cancel_reason = "service_stopped"
             run.worker.cancel()
         await asyncio.gather(*workers, return_exceptions=True)
+        await self.summaries.close()
 
 
 class TaskRun:

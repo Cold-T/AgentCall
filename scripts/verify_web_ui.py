@@ -10,6 +10,7 @@ import wave
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import uvicorn
 from playwright.async_api import async_playwright, expect
 
@@ -68,6 +69,28 @@ async def verify(directory):
         DEVICE, [{"id": "contact1", "name": "Test Contact", "number": "12345", "raw": ""}], []
     )
     manager = TaskManager(backend, config)
+
+    def summary_response(request):
+        assert json.loads(request.content)["model"] == "gpt-5.6-luna"
+        return httpx.Response(
+            200,
+            json={
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": "已确认答案为 42。<img src=x onerror=alert(1)>",
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+
+    manager.summaries.transport = httpx.MockTransport(summary_response)
     manager.start = nothing  # Keep submitted tasks queued; never run a model or dial.
     history_task = manager.create(TaskInput(device=DEVICE, number="22222", goal="History goal"))
     call_id = backend.store.new_call(DEVICE, "22222", "outgoing", "ended")
@@ -157,6 +180,9 @@ async def verify(directory):
             assert await page.locator("#history-detail").evaluate(
                 "el => el.getBoundingClientRect().top < window.innerHeight"
             )
+            await expect(page.locator("#history-ai-summary")).to_contain_text("已确认答案为 42。")
+            await expect(page.locator("#history-summary-model")).to_contain_text("GPT-5.6 Luna")
+            await expect(page.locator("#history-ai-summary img")).to_have_count(0)
             await expect(page.locator("#history-result")).to_contain_text('"answer": "42"')
             await expect(page.locator("#history-transcript")).to_contain_text(
                 "Hello from the assistant."
@@ -200,6 +226,7 @@ async def verify(directory):
                         "result_and_paginated_transcript": True,
                         "transcript_xss_safe": True,
                         "detail_navigation_and_downloads": True,
+                        "luna_summary_and_safe_text": True,
                         "mobile": True,
                         "live_pin_change_and_logout": True,
                         "real_calls": False,

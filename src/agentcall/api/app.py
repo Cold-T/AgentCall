@@ -419,6 +419,10 @@ def create_app(config=None, backend=None, task_manager=None):
         }
         return result
 
+    @app.post("/tasks/{task_id}/summary", tags=["tasks"])
+    async def summarize_task(task_id: str, retry: bool = False):
+        return await task_manager.summaries.summarize(task_id, retry=retry)
+
     @app.get("/tasks/{task_id}/transcript", tags=["tasks"])
     async def download_transcript(task_id: str):
         text = transcript_text(backend.store, task_id)

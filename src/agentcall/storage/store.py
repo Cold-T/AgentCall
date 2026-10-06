@@ -255,6 +255,9 @@ class Store:
                 state TEXT NOT NULL DEFAULT 'saved', outcome TEXT, call_id TEXT, model_result TEXT,
                 error TEXT, created_at TEXT NOT NULL, started_at TEXT, ended_at TEXT);
             CREATE TABLE IF NOT EXISTS task_starts(key TEXT PRIMARY KEY, task_id TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS task_summaries(
+                task_id TEXT PRIMARY KEY, model TEXT NOT NULL, status TEXT NOT NULL,
+                text TEXT, error TEXT, updated_at TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS task_events(
                 id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL, time TEXT NOT NULL,
                 kind TEXT NOT NULL, data TEXT NOT NULL);
@@ -300,6 +303,7 @@ class Store:
         for key in ("input", "config", "model_result", "error"):
             task[key] = json.loads(task[key]) if task[key] else None
         task["call"] = self.call(task["call_id"]) if task["call_id"] else None
+        task["summary"] = self.task_summary(task_id)
         return task
 
     def task_ids(self, state=None, device=None, outcome=None, limit=None, offset=0):
@@ -409,3 +413,14 @@ class Store:
             item["result"] = json.loads(item["result"]) if item["result"] else None
             result.append(item)
         return result
+
+    def task_summary(self, task_id):
+        row = self.db.execute("SELECT * FROM task_summaries WHERE task_id=?", (task_id,)).fetchone()
+        return dict(row) if row else None
+
+    def save_task_summary(self, task_id, model, status, text=None, error=None):
+        with self.db:
+            self.db.execute(
+                "INSERT OR REPLACE INTO task_summaries VALUES (?,?,?,?,?,?)",
+                (task_id, model, status, text, error, now()),
+            )

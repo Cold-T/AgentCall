@@ -199,6 +199,7 @@ async function historyDetail(row) {
   $('#history-detail').hidden = false;
   $('#history-summary').replaceChildren();
   $('#history-downloads').replaceChildren(); $('#recording-status').textContent = '';
+  $('#history-ai-summary').textContent = '正在读取…'; $('#history-summary-model').textContent = '';
   $('#history-detail').focus({preventScroll:true});
   $('#history-detail').scrollIntoView({behavior:'instant', block:'start'});
   $('#history-result').textContent = '正在读取…'; $('#history-transcript').textContent = '正在读取…';
@@ -249,6 +250,24 @@ async function historyDetail(row) {
   }
   if (!parent.childNodes.length) parent.textContent = '暂无对话转写。旧通话未启用转写或未接通时，可能没有 transcript。';
   $('#history-detail').scrollIntoView({behavior:'instant', block:'start'});
+  await loadResultSummary(task, request);
+}
+async function loadResultSummary(task, request, retry = false) {
+  if (request !== detailRequest) return;
+  const target = $('#history-ai-summary');
+  if (!task || task.state !== 'ended') {
+    target.textContent = task ? '通话结束后生成结果总结。' : '该通话没有 AI 任务记录可总结。'; return;
+  }
+  $('#history-summary-model').textContent = 'GPT-5.6 Luna'; target.textContent = '正在生成结果总结…';
+  try {
+    const summary = task.summary?.status === 'completed' ? task.summary : await api(`/tasks/${enc(task.id)}/summary${retry ? '?retry=true' : ''}`, 'POST');
+    if (request !== detailRequest) return;
+    target.textContent = summary.status === 'completed' ? summary.text : summary.error || '总结尚未完成。';
+    if (summary.status !== 'completed') target.append(button('重试总结', () => loadResultSummary(task, request, true)));
+  } catch (error) {
+    if (request !== detailRequest) return;
+    target.textContent = error.message; target.append(button('重试总结', () => loadResultSummary(task, request, true)));
+  }
 }
 $('#refresh-history').onclick = () => run(refreshHistory, $('#refresh-history'));
 $('#history-device').onchange = () => { historyOffset = 0; ++detailRequest; $('#history-detail').hidden = true; run(refreshHistory); };

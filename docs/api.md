@@ -98,3 +98,11 @@ curl -H "Authorization: Bearer $AGENTCALL_TOKEN" \
 - `GET /tasks/{task_id}/recording`：双声道 WAV 附件，左声道为对方，右声道为实际送入 SCO 的 AI 语音。任务尚未结束返回 409；没有录音返回 404。
 
 新 AI 通话自动录音。文件以任务 UUID 命名，存放在 SQLite 数据库同级的 `recordings/`，目录默认权限 0700，录音 0600；只通过受认证的下载路由提供。使用 `:memory:` 数据库时不持久录音。旧通话、手机同步历史和未接通任务没有可追溯生成的录音。录音保留到手动删除，不自动轮换；双声道 16-bit PCM 约占每分钟 1.92 MB（CVSD）或 3.84 MB（mSBC）。录音写入失败会舍弃该录音并记录 `task.recording_failed`，通话继续运行。
+
+## 结果总结
+
+`POST /tasks/{task_id}/summary` 使用指定的 `gpt-5.6-luna`（[官方模型文档](https://developers.openai.com/api/docs/models/gpt-5.6-luna)）与 OpenAI Responses API，总结已结束任务的目标、完成条件、结构化结果、转写及实际电话状态。复用服务的 OpenAI API Key，即使通话使用 Gemini，总结仍由 GPT-5.6 Luna 完成。未结束任务返回 400；所有调用均受现有认证及网页 CSRF 保护。
+
+响应包含 `model`、`status`（generating / completed / failed）、`text`、`error`、`updated_at`。成功或失败结果均保存在数据库，`GET /tasks/{task_id}` 的 `summary` 返回缓存，不触发模型调用。成功缓存不重复生成，并发请求合并为一次；失败后用 `POST /tasks/{task_id}/summary?retry=true` 显式重试。失败不会改变原始任务结果或通话状态，也不会自动替换为其他模型。接口错误信息不会包含 OpenAI 原始响应或凭据。
+
+请求 `store: false`，不启用工具。输入超过 500,000 字符时拒绝总结，不静默删减记录。服务关闭时取消未完成请求并保留可重试失败状态。总结使用模型 API，会产生相应用量；模型权限以当前账户为准。
