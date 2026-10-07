@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import socket
 from types import SimpleNamespace
@@ -57,12 +58,15 @@ async def test_audio_handshake_disconnect_releases_owner(service, failure_stage)
 async def test_basic_audio_rejects_missing_or_foreign_origin(service, monkeypatch, origin):
     backend = service[0]
     backend.config.pin_auth = True
-    monkeypatch.setenv("AGENTCALL_TOKEN", "0123")
+    test_pin = "0123"
+    monkeypatch.setenv("AGENTCALL_TOKEN", test_pin)
     app = create_app(backend.config, backend)
     endpoint = next(
         route.endpoint for route in app.routes if getattr(route, "name", None) == "audio_socket"
     )
-    headers = {"authorization": "Basic cGluOjAxMjM=", "host": "test"}
+    # Encode the synthetic fixture at runtime instead of storing a credential header.
+    credentials = base64.b64encode(f"pin:{test_pin}".encode()).decode()
+    headers = {"authorization": f"Basic {credentials}", "host": "test"}
     if origin:
         headers["origin"] = origin
     codes = []
