@@ -142,8 +142,7 @@ class TaskManager:
             return task
         run = self.runs.get(task_id)
         if run:
-            run.cancel_reason = "user_cancelled"
-            run.worker.cancel()
+            run.cancel("user_cancelled")
         else:
             self.state(task_id, "ended", outcome="user_cancelled", ended_at=now())
         self.wake.set()
@@ -164,8 +163,7 @@ class TaskManager:
             await asyncio.gather(self.scheduler, return_exceptions=True)
         workers = [r.worker for r in self.runs.values()]
         for run in self.runs.values():
-            run.cancel_reason = "service_stopped"
-            run.worker.cancel()
+            run.cancel("service_stopped")
         await asyncio.gather(*workers, return_exceptions=True)
         await self.summaries.close()
 
@@ -197,6 +195,14 @@ class TaskRun:
         self.result_audio_floor = None
         self.last_audio_response = None
         self.recording = None
+
+    def cancel(self, reason):
+        # Repeated cancellation must not interrupt finally: it hangs up the phone,
+        # releases audio ownership and closes the model connection.
+        if self.worker.cancelling() or self.store.task(self.id)["state"] == "finalizing":
+            return
+        self.cancel_reason = reason
+        self.worker.cancel()
 
     def spawn(self, coro, outcome):
         task = asyncio.create_task(coro)

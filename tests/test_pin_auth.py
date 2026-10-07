@@ -47,6 +47,35 @@ async def test_pin_bearer_basic_failure_limit_and_client_isolation(service, monk
         assert (await client.get("/health", headers=good)).status_code == 200
 
 
+async def test_basic_mutations_require_csrf_and_bearer_remains_compatible(service, monkeypatch):
+    backend = service[0]
+    backend.config.pin_auth = True
+    monkeypatch.setenv("AGENTCALL_TOKEN", "0123")
+    app = create_app(backend.config, backend)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        for headers in (
+            {},
+            {"Origin": "http://test"},
+            {"Origin": "https://evil.test", "X-AgentCall-CSRF": "1"},
+        ):
+            response = await client.post("/discovery/start", auth=("pin", "0123"), headers=headers)
+            assert response.status_code == 403
+        assert not service[4]
+        response = await client.post(
+            "/discovery/start",
+            auth=("pin", "0123"),
+            headers={"Origin": "http://test", "X-AgentCall-CSRF": "1"},
+        )
+        assert response.status_code == 200
+        response = await client.post(
+            "/discovery/stop",
+            headers={"Authorization": "Bearer 0123"},
+        )
+        assert response.status_code == 200
+
+
 def test_pin_mode_cannot_start_without_pin(monkeypatch, tmp_path):
     monkeypatch.delenv("AGENTCALL_TOKEN", raising=False)
     path = tmp_path / "config.toml"

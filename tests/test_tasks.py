@@ -637,6 +637,54 @@ async def test_active_cancel_and_saved_cancel(rig):
     assert rig.phone.commands.count("ATD123;") == 1
 
 
+@pytest.mark.parametrize("initial_end", ["user_cancelled", "timeout"])
+@pytest.mark.parametrize("second_request", ["cancel", "close"])
+async def test_cancel_and_service_close_preserve_finalizing_cleanup(
+    rig, monkeypatch, initial_end, second_request
+):
+    rig.mode = "hold"
+    task_id = await create_start(rig, payload(max_call_seconds=0.3))
+    await wait_for(lambda: rig.store.task(task_id)["state"] == "in_call")
+    run = rig.manager.runs[task_id]
+    entered = asyncio.Event()
+    proceed = asyncio.Event()
+    hangup = run.hangup_phone
+
+    async def delayed_hangup():
+        entered.set()
+        await proceed.wait()
+        await hangup()
+
+    monkeypatch.setattr(run, "hangup_phone", delayed_hangup)
+    close_job = None
+    try:
+        if initial_end == "user_cancelled":
+            await rig.manager.cancel(task_id)
+            await rig.manager.cancel(task_id)  # Retry before the worker catches cancellation.
+            assert run.worker.cancelling() == 1
+        await asyncio.wait_for(entered.wait(), 1)
+        assert rig.store.task(task_id)["state"] == "finalizing"
+        if second_request == "cancel":
+            assert (await rig.client.post(f"/tasks/{task_id}/cancel")).status_code == 202
+        else:
+            close_job = asyncio.create_task(rig.manager.close())
+            await asyncio.sleep(0.02)
+            assert not close_job.done()
+        proceed.set()
+        result = await completed(rig, task_id)
+        if close_job:
+            await close_job
+        assert result["outcome"] == initial_end
+        assert result["call"]["ended_at"]
+        assert rig.phone.commands.count("AT+CHUP") == 1
+        assert not run.bridge.audio.owner
+        assert run.provider.closing
+    finally:
+        proceed.set()
+        if close_job:
+            await close_job
+
+
 async def test_model_setup_failure_never_dials(rig):
     def failure(config):
         from agentcall.providers.base import ProviderError

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import socket
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -13,6 +14,70 @@ from agentcall.audio.transport import SCOAudio
 from agentcall.service.backend import Backend
 from agentcall.service.config import Config
 from agentcall.storage.store import Store
+
+
+@pytest.mark.parametrize("failure_stage", ["accept", "send_json"])
+async def test_audio_handshake_disconnect_releases_owner(service, failure_stage):
+    backend = service[0]
+    call_id = backend.store.new_call(DEVICE, "123", "outgoing", "active")
+    backend.current[DEVICE] = call_id
+    audio = SimpleNamespace(owner=False, closed=False, status=lambda: {})
+    backend.audio[DEVICE] = audio
+    app = create_app(backend.config, backend)
+    endpoint = next(
+        route.endpoint for route in app.routes if getattr(route, "name", None) == "audio_socket"
+    )
+
+    async def accept():
+        if failure_stage == "accept":
+            raise ConnectionError("peer disconnected during handshake")
+
+    async def send_json(status):
+        raise ConnectionError("peer disconnected before initial status")
+
+    async def close(**kwargs):
+        pass
+
+    websocket = SimpleNamespace(
+        headers={},
+        cookies={},
+        client=SimpleNamespace(host="test"),
+        accept=accept,
+        send_json=send_json,
+        close=close,
+    )
+    try:
+        await endpoint(websocket, call_id)
+        assert audio.owner is False
+    finally:
+        backend.audio.pop(DEVICE)
+
+
+@pytest.mark.parametrize("origin", [None, "https://evil.test"])
+async def test_basic_audio_rejects_missing_or_foreign_origin(service, monkeypatch, origin):
+    backend = service[0]
+    backend.config.pin_auth = True
+    monkeypatch.setenv("AGENTCALL_TOKEN", "0123")
+    app = create_app(backend.config, backend)
+    endpoint = next(
+        route.endpoint for route in app.routes if getattr(route, "name", None) == "audio_socket"
+    )
+    headers = {"authorization": "Basic cGluOjAxMjM=", "host": "test"}
+    if origin:
+        headers["origin"] = origin
+    codes = []
+
+    async def close(code):
+        codes.append(code)
+
+    websocket = SimpleNamespace(
+        headers=headers,
+        cookies={},
+        url=SimpleNamespace(scheme="ws"),
+        close=close,
+    )
+    await endpoint(websocket, "unused")
+    assert codes == [1008]
 
 
 @pytest.mark.parametrize("pin_auth", [False, True])

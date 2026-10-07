@@ -25,7 +25,7 @@ from agentcall.service.backend import Backend  # noqa: E402
 from agentcall.service.config import Config  # noqa: E402
 from agentcall.storage.store import Store  # noqa: E402
 from agentcall.tasks.manager import TaskManager  # noqa: E402
-from agentcall.tasks.models import TaskInput  # noqa: E402
+from agentcall.tasks.models import DEFAULT_BACKGROUND, TaskInput  # noqa: E402
 
 
 async def verify(directory):
@@ -148,7 +148,7 @@ async def verify(directory):
             await expect(page.get_by_role("tab")).to_have_count(3)
             await page.get_by_role("tab", name="发起通话").click()
             await expect(page.locator('#task-create [name="contact_id"] option')).to_have_count(2)
-            assert "不要朗读任务说明" in await page.locator("#default-background").input_value()
+            assert await page.locator("#default-background").input_value() == DEFAULT_BACKGROUND
             await expect(page.locator("#default-background")).to_be_editable()
             await page.locator("#default-background").fill("Use only the edited call instructions.")
             await expect(page.locator('#task-create [name="voice"]')).to_have_value("marin")
@@ -173,7 +173,7 @@ async def verify(directory):
             assert created["input"]["max_call_seconds"] == 120
             assert created["config"]["language"] == "English"
             assert created["config"]["voice"] == "cedar"
-            assert created["config"]["options"]["speed"] == 1.2
+            assert created["config"]["options"]["speed"] == 1.0
             assert created["config"]["options"]["turn_detection"]["threshold"] == 0.65
             loaded = Config.load(config_path)
             assert loaded.default_max_call_seconds == 120 and loaded.provider.voice == "cedar"
@@ -192,8 +192,9 @@ async def verify(directory):
                 and inherited["config"]["voice"] == "cedar"
             )
             assert inherited["config"]["model"] == created["config"]["model"]
+            assert inherited["config"]["options"]["speed"] == 1.2
             assert created["config"]["options"]["transcription"]
-            assert "不要朗读任务说明" in await page.locator("#default-background").input_value()
+            assert await page.locator("#default-background").input_value() == DEFAULT_BACKGROUND
             await page.locator("#default-background").fill("")
             await page.locator('#task-create [name="number"]').fill("33333")
             await expect(page.locator('#task-create [name="contact_id"]')).to_have_value("")

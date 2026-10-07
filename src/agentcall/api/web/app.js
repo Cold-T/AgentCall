@@ -13,6 +13,7 @@ let defaultsSave = Promise.resolve();
 let defaultsRequest = 0;
 let activeTask;
 let historyOffset = 0;
+let historyRequest = 0;
 let contactsRequest = 0;
 let detailRequest = 0;
 const states = {saved:'待执行', queued:'排队中', preparing:'准备中', dialing:'拨号中', in_call:'通话中', finalizing:'整理结果', ended:'已结束', active:'通话中', incoming:'来电', outgoing:'呼出'};
@@ -241,11 +242,14 @@ async function currentCalls() {
   }
 }
 async function refreshHistory() {
+  const request = ++historyRequest;
+  const offset = historyOffset;
   const device = $('#history-device').value;
-  const rows = await api(`/history?limit=51&offset=${historyOffset}${device ? '&device=' + enc(device) : ''}`);
-  $('#history-prev').disabled = historyOffset === 0;
+  const rows = await api(`/history?limit=51&offset=${offset}${device ? '&device=' + enc(device) : ''}`);
+  if (request !== historyRequest) return;
+  $('#history-prev').disabled = offset === 0;
   $('#history-next').disabled = rows.length <= 50;
-  $('#history-page').textContent = '第 ' + (historyOffset / 50 + 1) + ' 页';
+  $('#history-page').textContent = '第 ' + (offset / 50 + 1) + ' 页';
   table('#history-list', rows.slice(0,50).map(row => ({...row,
     number:row.call?.number || row.task?.input.number,
     goal:row.task?.input.goal || (row.source === 'pbap' ? '手机通话历史' : '手动通话'),

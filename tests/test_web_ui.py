@@ -1,5 +1,8 @@
 import copy
 import os
+import shutil
+import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
@@ -12,6 +15,49 @@ from agentcall.tasks.manager import TaskManager
 from agentcall.tasks.models import DEFAULT_BACKGROUND, TaskInput
 
 CSRF = {"X-AgentCall-CSRF": "1", "Origin": "https://test"}
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required")
+def test_history_latest_request_controls_filter_and_page():
+    script = r"""
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+const code = source.split('async function refreshHistory() {')[1]
+  .split('\nasync function historyDetail(')[0];
+const elements = {
+  '#history-device': {value: 'A'}, '#history-prev': {},
+  '#history-next': {}, '#history-page': {}
+};
+const requests = [];
+let displayed;
+const context = vm.createContext({
+  $: selector => elements[selector], enc: encodeURIComponent,
+  api: path => new Promise(resolve => requests.push({path, resolve})),
+  status: value => value, time: value => value,
+  table: (selector, rows) => { displayed = rows; }
+});
+vm.runInContext('let historyOffset = 0; let historyRequest = 0;\n' +
+  'async function refreshHistory() {' + code, context);
+(async () => {
+  const older = vm.runInContext('refreshHistory()', context);
+  elements['#history-device'].value = 'B';
+  vm.runInContext('historyOffset = 50', context);
+  const latest = vm.runInContext('refreshHistory()', context);
+  assert.match(requests[0].path, /offset=0&device=A/);
+  assert.match(requests[1].path, /offset=50&device=B/);
+  requests[1].resolve([{call: {number: 'B'}}]);
+  await latest;
+  requests[0].resolve([{call: {number: 'A'}}]);
+  await older;
+  assert.equal(displayed[0].number, 'B');
+  assert.equal(elements['#history-page'].textContent, '第 2 页');
+  assert.equal(elements['#history-prev'].disabled, false);
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+    source = Path(__file__).parents[1] / "src/agentcall/api/web/app.js"
+    subprocess.run(["node", "-e", script, str(source)], check=True, timeout=10)
 
 
 def web_app(service, monkeypatch, tmp_path):

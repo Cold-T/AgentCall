@@ -23,7 +23,7 @@ cd ~/AgentCall
 .venv/bin/python scripts/set_pin.py
 ```
 
-网页登录使用 opaque cookie，公网 HTTPS 设置 `Secure`、`HttpOnly`、`SameSite=Strict`，有效期 12 小时。cookie 写请求要求同源与 `X-AgentCall-CSRF: 1`。PIN 错误认证与 API 共用每 IP 10 次 / 60 秒的限流；网页分别提示错误 PIN、剩余等待时间、同源拒绝和服务故障。PIN 不写入 URL 或浏览器存储，也不提交 GitHub。
+网页登录使用 opaque cookie，公网 HTTPS 设置 `Secure`、`HttpOnly`、`SameSite=Strict`，有效期 12 小时。cookie 和 Basic 写请求要求同源与 `X-AgentCall-CSRF: 1`；Cookie / Basic 音频 WebSocket 要求同源 Origin，显式 Bearer 自动化客户端不需要 CSRF 标记。PIN 错误认证与 API 共用每 IP 10 次 / 60 秒的限流；网页分别提示错误 PIN、剩余等待时间、同源拒绝和服务故障。PIN 不写入 URL 或浏览器存储，也不提交 GitHub。
 
 ## 相关 API
 

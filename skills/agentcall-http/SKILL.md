@@ -11,7 +11,7 @@ Use the HTTP API for phone operations and tests; do not substitute direct Blueto
 
 Use the configured base URL and credential from the environment or an approved secret store. Public gateways use HTTPS with `/api`; local installations commonly use `http://127.0.0.1:8765`. Include the prefix exactly once.
 
-The configured four-digit PIN is the API token; no login or token exchange is required. Send `Authorization: Bearer <PIN>` or Basic authentication with username `pin` and the PIN as password. Treat the PIN as a string to preserve leading zeroes. Keep credentials out of task bodies, URLs, logs and messages; model API keys remain service-side.
+The configured four-digit PIN is the API token; no login or token exchange is required. Send `Authorization: Bearer <PIN>` or Basic authentication with username `pin` and the PIN as password. Prefer Bearer for automation. Basic mutations require `X-AgentCall-CSRF: 1` and any supplied Origin must match the service; Basic audio WebSockets require a same-origin Origin. Treat the PIN as a string to preserve leading zeroes. Keep credentials out of task bodies, URLs, logs and messages; model API keys remain service-side.
 
 Use authenticated `GET /openapi.json` or `/docs` for fields not covered here. `401` means authentication failed; `429` requires respecting `Retry-After`; `409` means a state conflict; `422` means invalid input; `503` means Bluetooth/contact-sync availability; `504` means timeout. Do not blindly repeat a mutation after a timeout.
 

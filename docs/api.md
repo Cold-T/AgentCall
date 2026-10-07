@@ -112,3 +112,7 @@ API 创建任务无需填写 `background`；省略时使用后台默认通话说
 请求 `store: false`，不启用工具。输入超过 500,000 字符时拒绝总结，不静默删减记录。服务关闭时取消未完成请求并保留可重试失败状态。总结使用模型 API，会产生相应用量；模型权限以当前账户为准。
 
 `service.default_max_call_seconds` 为持久化、无需重启即可应用的默认最长通话秒数（初始 300，范围大于 0 且不超过 3600）。通过 `PUT /settings` 保存。创建任务省略 `max_call_seconds` 时使用该值；显式参数优先。网页选择的模型和声音也保存到默认 `provider`，API 省略 `config` 时共同继承。
+
+## 浏览器认证与跨站保护
+
+使用网页会话 cookie 或 HTTP Basic 的写请求（POST / PUT / PATCH / DELETE）必须携带 `X-AgentCall-CSRF: 1`；提供 `Origin` 时必须与服务同源。缺少标记或跨站请求返回 403。Cookie / Basic 音频 WebSocket 必须携带同源 `Origin`。显式 Bearer 客户端不需要 CSRF 标记；CLI 和自动化客户端推荐使用 Bearer，Swagger 的写操作也可选择 Bearer。

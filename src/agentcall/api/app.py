@@ -20,6 +20,7 @@ from fastapi.security import HTTPBasic, HTTPBearer
 from pydantic import BaseModel, Field
 from starlette.requests import HTTPConnection
 
+from agentcall import __version__
 from agentcall.api.auth import FailedAuthLimiter, authorized
 from agentcall.api.downloads import transcript_text
 from agentcall.api.ui import Sessions, install_ui, same_origin
@@ -107,7 +108,7 @@ def create_app(config=None, backend=None, task_manager=None):
 
     app = FastAPI(
         title="AgentCall service",
-        version="0.1.0",
+        version=__version__,
         root_path=config.root_path,
         lifespan=lifespan,
         description="Headless phone calls and AI tasks. Bearer authentication is required when configured. "
@@ -131,9 +132,12 @@ def create_app(config=None, backend=None, task_manager=None):
             response = await call_next(request)
         else:
             if (
-                sessions.valid(request)
+                (
+                    sessions.valid(request)
+                    or request.headers.get("authorization", "").startswith("Basic ")
+                )
                 and not authorized(
-                    request.headers.get("authorization"), config.token, config.pin_auth
+                    request.headers.get("authorization"), config.token, pin_auth=False
                 )
                 and request.method not in ("GET", "HEAD", "OPTIONS")
                 and (not same_origin(request) or request.headers.get("X-AgentCall-CSRF") != "1")
@@ -489,9 +493,10 @@ def create_app(config=None, backend=None, task_manager=None):
 
     @app.websocket("/calls/{call_id}/audio")
     async def audio_socket(websocket: WebSocket, call_id: str):
-        if sessions.valid(websocket) and (
-            not websocket.headers.get("origin") or not same_origin(websocket)
-        ):
+        if (
+            sessions.valid(websocket)
+            or websocket.headers.get("authorization", "").startswith("Basic ")
+        ) and (not websocket.headers.get("origin") or not same_origin(websocket)):
             await websocket.close(code=1008)
             return
         if check_auth(websocket)[0] != 200:
@@ -507,8 +512,6 @@ def create_app(config=None, backend=None, task_manager=None):
             await websocket.close(code=1013)
             return
         audio.owner = True
-        await websocket.accept()
-        await websocket.send_json(audio.status())
 
         async def receive_phone():
             while True:
@@ -521,8 +524,11 @@ def create_app(config=None, backend=None, task_manager=None):
                     raise ValueError("audio message exceeds 256 KiB")
                 await audio.send(pcm)
 
-        tasks = [asyncio.create_task(receive_phone()), asyncio.create_task(send_phone())]
+        tasks = []
         try:
+            await websocket.accept()
+            await websocket.send_json(audio.status())
+            tasks = [asyncio.create_task(receive_phone()), asyncio.create_task(send_phone())]
             done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
             for task in done:
                 task.result()
