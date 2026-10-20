@@ -11,9 +11,17 @@ from agentcall.audio.recording import CallRecording, recording_path
 from agentcall.bluetooth.hfp import HFPError
 from agentcall.providers.base import ProviderError
 from agentcall.providers.gemini import GeminiLive
+from agentcall.providers.live import OpenAILive
 from agentcall.providers.openai import OpenAIRealtime
 from agentcall.storage.store import now
-from agentcall.tasks.models import TOOLS, ProviderConfig, TaskInput, instructions
+from agentcall.tasks.models import (
+    TOOLS,
+    ProviderConfig,
+    TaskInput,
+    instructions,
+    live_backend_instructions,
+    live_instructions,
+)
 from agentcall.tasks.summary import TaskSummarizer
 from agentcall.vendor import at
 
@@ -47,7 +55,11 @@ class TaskManager:
         key = os.environ.get(env, "")
         if not key:
             raise ProviderError(f"{config.provider} API key environment variable is not configured")
-        provider = OpenAIRealtime if config.provider == "openai" else GeminiLive
+        provider = (
+            (OpenAILive if config.is_live else OpenAIRealtime)
+            if config.provider == "openai"
+            else GeminiLive
+        )
         return provider(config, key, timeout=self.config.model_connect_seconds)
 
     def on_event(self, event):
@@ -75,6 +87,10 @@ class TaskManager:
         if override.get("provider", base["provider"]) != base["provider"]:
             defaults = ProviderConfig(provider=override["provider"]).model_dump()
             base = {**defaults, "language": base["language"]}
+        if (override.get("model", base["model"]) == "gpt-live-1") != (
+            base["model"] == "gpt-live-1"
+        ):
+            base["options"] = {}
         options = {**base["options"], **override.pop("options", {})}
         resolved = ProviderConfig(**{**base, **override, "options": options}).model_dump()
         task_id = self.store.create_task(path, data, resolved)
@@ -142,11 +158,31 @@ class TaskManager:
             return task
         run = self.runs.get(task_id)
         if run:
-            run.cancel("user_cancelled")
+            if run.live and run.bridge:
+                run.hangup_requested = True
+                run.live_closing = True
+                run.provider.playback_blocked = True
+                try:
+                    await run.bridge.interrupt()
+                finally:
+                    run.cancel("user_cancelled")
+            else:
+                run.cancel("user_cancelled")
         else:
             self.state(task_id, "ended", outcome="user_cancelled", ended_at=now())
         self.wake.set()
         return self.store.task(task_id)
+
+    async def stop_live_playback(self, call_id):
+        for run in tuple(self.runs.values()):
+            if run.live and run.bridge and self.store.task(run.id)["call_id"] == call_id:
+                run.hangup_requested = True
+                run.live_closing = True
+                run.provider.playback_blocked = True
+                try:
+                    await run.bridge.interrupt()
+                except (OSError, RuntimeError) as exc:
+                    self.event(run.id, "task.cleanup_error", error=str(exc))
 
     async def update_context(self, task_id, text):
         run = self.runs.get(task_id)
@@ -193,8 +229,13 @@ class TaskRun:
         self.hangup_requested = False
         self.audio_chunks = 0
         self.result_audio_floor = None
+        self.closing_pending = False
         self.last_audio_response = None
         self.recording = None
+        self.live = ProviderConfig(**task["config"]).is_live
+        self.live_tool_lock = asyncio.Lock()
+        self.live_closing = False
+        self.last_audio_metrics = 0.0
 
     def cancel(self, reason):
         # Repeated cancellation must not interrupt finally: it hangs up the phone,
@@ -202,6 +243,8 @@ class TaskRun:
         if self.worker.cancelling() or self.store.task(self.id)["state"] == "finalizing":
             return
         self.cancel_reason = reason
+        if self.live and self.provider is not None:
+            self.provider.control_epoch += 1
         self.worker.cancel()
 
     def spawn(self, coro, outcome):
@@ -256,19 +299,63 @@ class TaskRun:
 
     async def wait_connected(self):
         deadline = asyncio.get_running_loop().time() + self.config.answer_timeout_seconds
-        while True:
-            terminal = self.terminal()
-            if terminal:
-                raise TaskFailure(terminal, "call or model ended before conversation")
-            call = self.linked_call()
-            if call and call["state"] == "active":
-                self.call_deadline = (
-                    asyncio.get_running_loop().time() + self.task["input"]["max_call_seconds"]
-                )
-                break
-            if asyncio.get_running_loop().time() >= deadline:
-                raise TaskFailure("no_answer", "phone did not confirm answer before deadline")
-            await asyncio.sleep(0.02)
+        ringing_audio = ringing_reader = None
+
+        async def drain_ringing(audio):
+            try:
+                while True:
+                    pcm = await audio.receive()
+                    call = self.linked_call()
+                    if call and call["state"] == "active":
+                        # Retain the first packet received after answer for prime().
+                        audio.prefetched_pcm = pcm
+                        return
+            except OSError:
+                # Some phones replace the ringing SCO socket at answer.
+                return
+
+        try:
+            while True:
+                terminal = self.terminal()
+                if terminal:
+                    raise TaskFailure(terminal, "call or model ended before conversation")
+                call = self.linked_call()
+                if call and call["state"] == "active":
+                    self.call_deadline = (
+                        asyncio.get_running_loop().time() + self.task["input"]["max_call_seconds"]
+                    )
+                    break
+                if (
+                    ringing_reader
+                    and ringing_reader.done()
+                    and self.backend.audio.get(self.device) is not ringing_audio
+                ):
+                    ringing_audio.owner = False
+                    ringing_reader = None
+                if self.live and ringing_reader is None:
+                    audio = self.backend.audio.get(self.device)
+                    if audio and not audio.closed:
+                        if audio.owner:
+                            raise TaskFailure(
+                                "audio_failed", "SCO audio is owned by another client"
+                            )
+                        ringing_audio = audio
+                        audio.owner = True
+                        # A phone may open SCO while ringing. Do not let ringback
+                        # accumulate in the socket and flood Live's startup queue.
+                        ringing_reader = asyncio.create_task(drain_ringing(audio))
+                if asyncio.get_running_loop().time() >= deadline:
+                    raise TaskFailure("no_answer", "phone did not confirm answer before deadline")
+                await asyncio.sleep(0.02)
+        finally:
+            if ringing_reader:
+                ringing_reader.cancel()
+                await asyncio.gather(ringing_reader, return_exceptions=True)
+                ringing_audio.owner = False
+        if ringing_audio and ringing_audio.closed:
+            if self.backend.audio.get(self.device) is ringing_audio:
+                self.backend.stop_audio(self.device)
+                self.backend.ensure_audio(self.device)
         deadline = asyncio.get_running_loop().time() + self.config.audio_timeout_seconds
         while True:
             terminal = self.terminal()
@@ -316,7 +403,12 @@ class TaskRun:
                 raise TaskFailure("phone_unavailable", str(exc)) from exc
             try:
                 self.provider = self.manager.factory(ProviderConfig(**self.task["config"]))
-                await self.provider.open(instructions(self.task), TOOLS)
+                if self.live:
+                    self.provider.conversation_instructions = live_instructions(self.task)
+                await self.provider.open(
+                    live_backend_instructions(self.task) if self.live else instructions(self.task),
+                    TOOLS,
+                )
             except ProviderError as exc:
                 raise TaskFailure("model_connection_failed", str(exc)) from exc
             self.spawn(self.read_provider(), "model_disconnected")
@@ -338,10 +430,26 @@ class TaskRun:
             self.bridge = AudioBridge(audio, self.provider)
             self.manager.state(self.id, "in_call")
             self.manager.event(self.id, "task.audio", **self.bridge.status())
-            self.spawn(self.bridge.input_loop(), "audio_failed")
-            self.manager.event(self.id, "task.opening_pause", seconds=1.0)
-            self.spawn(self.bridge.output_loop(start_delay=1.0), "audio_failed")
-            await self.provider.start_response()
+            if self.live:
+                self.spawn(self.bridge.output_loop(), "audio_failed")
+                self.spawn(self.bridge.input_loop(), "audio_failed")
+                startup = self.spawn(self.provider.start_response(), "model_disconnected")
+                async with asyncio.timeout_at(self.call_deadline):
+                    while not startup.done():
+                        terminal = self.terminal()
+                        if terminal or self.done.is_set():
+                            if self.failure:
+                                raise self.failure
+                            raise TaskFailure(
+                                terminal or "incomplete", "call ended during Live startup"
+                            )
+                        await asyncio.sleep(0.02)
+                    await startup
+            else:
+                self.spawn(self.bridge.input_loop(), "audio_failed")
+                self.manager.event(self.id, "task.opening_pause", seconds=1.0)
+                self.spawn(self.bridge.output_loop(start_delay=1.0), "audio_failed")
+                await self.provider.start_response()
             async with asyncio.timeout_at(self.call_deadline):
                 while True:
                     terminal = self.terminal()
@@ -369,6 +477,11 @@ class TaskRun:
             for child in self.children:
                 child.cancel()
             await asyncio.gather(*self.children, return_exceptions=True)
+            if self.live and self.bridge:
+                try:
+                    await self.bridge.interrupt()
+                except (OSError, RuntimeError) as exc:
+                    self.manager.event(self.id, "task.cleanup_error", error=str(exc))
             try:
                 await self.hangup_phone()
             except (HFPError, TimeoutError, OSError) as exc:
@@ -385,6 +498,13 @@ class TaskRun:
             if self.provider:
                 with suppress(ProviderError, OSError, TimeoutError):
                     await self.provider.close()
+                if self.live:
+                    self.manager.event(
+                        self.id,
+                        "model.live_usage",
+                        usage=self.provider.final_usage,
+                        confirmed=self.provider.closed.is_set(),
+                    )
             self.manager.state(self.id, "ended", outcome=outcome, error=error, ended_at=now())
             self.backend.claims.pop(self.device, None)
             self.manager.runs.pop(self.id, None)
@@ -406,7 +526,21 @@ class TaskRun:
     async def read_provider(self):
         async for event in self.provider.events():
             kind = event["kind"]
+            if self.live and (
+                kind in ("live_context", "delegation")
+                or (
+                    kind == "transcript"
+                    and event.get("role") == "user"
+                    and not event.get("repeated_recording", False)
+                )
+            ):
+                await self.revoke_live_hangup()
             if kind == "audio":
+                if self.live and (
+                    self.live_closing
+                    or event.get("generation", 0) != getattr(self.provider, "audio_generation", 0)
+                ):
+                    continue
                 if self.bridge is None:
                     raise ProviderError("model produced audio before phone/audio readiness")
                 if event.get("response_id") in self.interrupted_responses:
@@ -420,15 +554,32 @@ class TaskRun:
                 if event["pcm"]:
                     self.audio_chunks += 1
                     self.last_audio_response = event.get("response_id")
+                if self.live:
+                    current = asyncio.get_running_loop().time()
+                    if current - self.last_audio_metrics >= 1:
+                        self.last_audio_metrics = current
+                        self.manager.event(self.id, "task.audio", **self.bridge.status())
+            elif kind == "dtmf_feedback":
+                self.manager.event(self.id, "task.dtmf_feedback", verdict=event["verdict"])
+            elif kind == "dtmf_no_progress":
+                self.manager.event(self.id, "task.dtmf_no_progress")
+                self.failure = TaskFailure("incomplete", "DTMF navigation could not be confirmed")
+                self.done.set()
+                self.manager.wake.set()
+                return
             elif kind == "tool":
                 if event.get("response_id") in self.interrupted_responses:
                     continue
-                await self.tool(event)
+                if self.live:
+                    self.spawn(self.live_tool(event), "tool_failed")
+                else:
+                    await self.tool(event)
             elif kind == "tool_cancelled":
                 self.manager.event(self.id, "model.tool_cancelled", **event)
                 if self.hangup_job and self.hangup_call_id in event["call_ids"]:
                     self.hangup_job.cancel()
                     self.hangup_job = None
+                    self.closing_pending = False
             elif kind == "response_started":
                 self.responses.add(event["response_id"])
                 self.response_events.setdefault(event["response_id"], asyncio.Event())
@@ -438,6 +589,12 @@ class TaskRun:
             ):
                 self.interrupted_responses.update(self.responses)
                 self.continue_response = False
+                if self.closing_pending and not self.hangup_requested:
+                    self.closing_pending = False
+                    self.store.update_task(self.id, model_result=None)
+                    self.manager.event(
+                        self.id, "task.hangup_revoked", reason="recipient_interrupted"
+                    )
                 self.last_audio_response = None
                 if self.result_audio_floor is not None:
                     self.result_audio_floor = self.audio_chunks
@@ -461,6 +618,20 @@ class TaskRun:
                 self.manager.event(self.id, "model.response", **event)
                 if event.get("status") == "failed":
                     raise ProviderError("model response failed")
+                if (
+                    not self.live
+                    and self.closing_pending
+                    and event.get("status") == "completed"
+                    and not self.hangup_job
+                    and not self.responses
+                    and response_id not in self.interrupted_responses
+                    and response_id == self.last_audio_response
+                    and self.result_audio_floor is not None
+                    and self.audio_chunks > self.result_audio_floor
+                ):
+                    self.continue_response = False
+                    self.hangup_job = self.spawn(self.normal_hangup(response_id), "hangup_failed")
+                    self.manager.event(self.id, "task.hangup_scheduled", reason="task_finished")
                 if self.continue_response and not self.responses and not self.hangup_job:
                     self.continue_response = False
                     await self.provider.start_response()
@@ -480,25 +651,80 @@ class TaskRun:
         if not isinstance(call_id, str) or not 1 <= len(call_id) <= 256:
             raise ProviderError("tool call has invalid ID")
         if not self.store.claim_tool(self.id, call_id, name, raw):
+            if self.live:
+                await self.provider.tool_result(
+                    call_id,
+                    {
+                        "ok": False,
+                        "error": "Operation ID already claimed; do not repeat its action.",
+                    },
+                )
             return
         self.manager.event(self.id, "tool.call", call_id=call_id, name=name, arguments=raw)
+        if self.live and name == "send_dtmf":
+            self.manager.event(
+                self.id,
+                "task.dtmf_requested",
+                call_id=call_id,
+                control_epoch=event.get("control_epoch"),
+                dtmf_epoch=event.get("dtmf_epoch"),
+            )
         result = {"ok": False}
         try:
             if not self.bridge or self.done.is_set():
                 raise ValueError("phone conversation is not active")
-            schema = next((t["parameters"] for t in TOOLS if t["name"] == name), None)
+            if self.live and self.hangup_requested:
+                raise ValueError("call is ending; action was not executed")
+            if self.live and not self.provider.validate_operation(name, event):
+                if name == "send_dtmf":
+                    self.manager.event(
+                        self.id,
+                        "task.dtmf_rejected",
+                        call_id=call_id,
+                        reason="superseded_or_navigation_pending",
+                    )
+                raise ValueError("request superseded; action was not executed")
+            tools = self.provider.tools if self.live else TOOLS
+            schema = next((t["parameters"] for t in tools if t["name"] == name), None)
             if schema is None:
                 raise ValueError("unknown tool")
             args = json.loads(raw)
             Draft202012Validator(schema).validate(args)
             if name == "send_dtmf":
+                if self.live:
+                    self.provider.reserve_dtmf()
+                    self.manager.event(self.id, "task.dtmf_sending", call_id=call_id)
                 await self.backend.slc(self.device).dtmf(args["digits"])
             elif name == "finish_task":
                 Draft202012Validator(self.task["input"]["result_schema"]).validate(args["result"])
-                if self.store.task(self.id)["model_result"] is not None:
+                if not self.live and self.store.task(self.id)["model_result"] is not None:
                     raise ValueError("task result already submitted")
+                farewell = args.pop("farewell") if self.live else None
+                if self.live and not farewell.strip():
+                    raise ValueError("farewell must not be blank")
                 self.store.update_task(self.id, model_result=args)
                 self.result_audio_floor = self.audio_chunks
+                if not self.live:
+                    self.closing_pending = True
+                if self.live and self.hangup_job is None:
+                    # Closure belongs to the application, not a second model tool call.
+                    self.hangup_call_id = None
+                    self.hangup_job = self.spawn(
+                        self.live_hangup(farewell, event["revision"], event.get("delegation_id")),
+                        "hangup_failed",
+                    )
+                    self.manager.event(self.id, "task.hangup_scheduled", reason="task_finished")
+            elif name == "hangup" and self.live:
+                if self.store.task(self.id)["model_result"] is None:
+                    raise ValueError("submit the task result before closing")
+                if self.hangup_job is None:
+                    self.hangup_call_id = call_id
+                    self.hangup_job = self.spawn(
+                        self.live_hangup(
+                            args["farewell"], event["revision"], event.get("delegation_id")
+                        ),
+                        "hangup_failed",
+                    )
             elif name == "hangup":
                 if not event.get("response_id"):
                     raise ValueError("hangup requires a provider response ID")
@@ -520,11 +746,41 @@ class TaskRun:
                         self.normal_hangup(event.get("response_id")), "hangup_failed"
                     )
             result = {"ok": True}
-        except (ValueError, TypeError, ValidationError, HFPError) as exc:
+            if self.live and name in ("finish_task", "hangup"):
+                result["state"] = "scheduled"
+        except asyncio.CancelledError:
+            if self.live:
+                result = {
+                    "ok": False,
+                    "state": "unknown",
+                    "error": "Call ended during operation; it may have executed. Do not retry.",
+                }
+                self.store.finish_tool(self.id, call_id, result)
+                self.manager.event(self.id, "tool.result", call_id=call_id, result=result)
+            raise
+        except HFPError as exc:
             result = {"ok": False, "error": str(exc)[:1000]}
+            if self.live and name == "send_dtmf":
+                result.update(
+                    state="unknown",
+                    error="DTMF failed; some digits may already have been sent. Do not retry automatically.",
+                )
+        except (ValueError, TypeError, ValidationError) as exc:
+            result = {"ok": False, "error": str(exc)[:1000]}
+        if self.live and name == "send_dtmf" and self.provider.dtmf_state == "sending":
+            if result.get("ok"):
+                result["state"] = "accepted"
+            self.provider.complete_dtmf(result)
+            self.manager.event(
+                self.id,
+                "task.dtmf_accepted" if result.get("ok") else "task.dtmf_unknown",
+                call_id=call_id,
+            )
         self.store.finish_tool(self.id, call_id, result)
         self.manager.event(self.id, "tool.result", call_id=call_id, result=result)
         await self.provider.tool_result(call_id, result)
+        if self.live:
+            return
         if name != "hangup" or not result["ok"]:
             self.continue_response = True
             if not self.responses:
@@ -537,3 +793,79 @@ class TaskRun:
         await self.bridge.drained()
         await self.hangup_phone()
         self.done.set()
+
+    async def live_tool(self, event):
+        # Never block the audio/transcript reader on DTMF or another side effect.
+        async with self.live_tool_lock:
+            await self.tool(event)
+
+    async def revoke_live_hangup(self):
+        if not self.hangup_requested and self.store.task(self.id)["model_result"] is not None:
+            self.store.update_task(self.id, model_result=None)
+            for operation in self.provider.operations:
+                if operation["name"] == "finish_task":
+                    operation["result"] = {**operation["result"], "state": "superseded"}
+            self.manager.event(self.id, "task.result_superseded", revision=self.provider.revision)
+        if self.hangup_job and not self.hangup_requested:
+            job = self.hangup_job
+            call_id = self.hangup_call_id
+            result = {"ok": True, "state": "revoked", "executed": False}
+            if call_id is not None:
+                self.store.finish_tool(self.id, call_id, result)
+                for operation in self.provider.operations:
+                    if operation["call_id"] == call_id:
+                        operation["result"] = result
+                self.manager.event(self.id, "tool.result", call_id=call_id, result=result)
+            self.hangup_job = None
+            self.hangup_call_id = None
+            job.cancel()
+            await asyncio.gather(job, return_exceptions=True)
+            if self.live_closing:
+                await self.bridge.interrupt()
+            self.live_closing = False
+            self.provider.playback_blocked = False
+            self.manager.event(self.id, "task.hangup_revoked", revision=self.provider.revision)
+            await self.provider.append(
+                "instructions",
+                "The recipient spoke; closing is canceled. Listen and address "
+                "their latest request. Previously executed operations remain executed.",
+            )
+
+    async def live_hangup(self, farewell, revision, delegation):
+        try:
+            pcm = await self.provider.backend.render_farewell(
+                farewell, self.task["config"]["voice"], self.task["config"]["language"]
+            )
+            if (
+                revision != self.provider.revision
+                or self.done.is_set()
+                or delegation != getattr(self.provider, "delegation_id", None)
+            ):
+                return
+            self.live_closing = True
+            self.provider.playback_blocked = True
+            await self.provider.append(
+                "instructions",
+                "The application is playing the final goodbye. Remain silent and "
+                "listen. If the recipient speaks, resume the conversation and delegate again.",
+            )
+            played = await self.bridge.play_clip(pcm)
+            if (
+                not played
+                or revision != self.provider.revision
+                or self.done.is_set()
+                or delegation != getattr(self.provider, "delegation_id", None)
+            ):
+                return
+            self.manager.event(self.id, "task.farewell_played", text=farewell)
+            # No network/model await between the final revision check and hangup intent.
+            await self.hangup_phone()
+            self.done.set()
+        finally:
+            if self.hangup_job is asyncio.current_task() and not self.hangup_requested:
+                self.hangup_job = None
+                self.hangup_call_id = None
+                if self.live_closing:
+                    await self.bridge.interrupt()
+                self.live_closing = False
+                self.provider.playback_blocked = False

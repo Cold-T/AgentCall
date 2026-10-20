@@ -324,6 +324,8 @@ def create_app(config=None, backend=None, task_manager=None):
 
     @app.post("/calls/{call_id}/hangup", tags=["calls"])
     async def hangup(call_id: str):
+        backend.call_device(call_id)
+        await task_manager.stop_live_playback(call_id)
         await backend.slc(backend.call_device(call_id)).hangup()
         return {"accepted": True}
 

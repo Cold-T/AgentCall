@@ -33,6 +33,7 @@ class SCOAudio:
         self.closed = False
         self.write_lock = asyncio.Lock()
         self.playout_until = 0.0
+        self.send_at = 0.0
         self.output_generation = 0
         self.recorder = None
         self.prefetched_pcm = None
@@ -99,7 +100,7 @@ class SCOAudio:
     async def send_packet(self, packet, duration=0):
         # sock_sendall may split a partial write, which would corrupt SCO packet boundaries.
         loop = asyncio.get_running_loop()
-        delay = self.playout_until - loop.time()
+        delay = self.send_at - loop.time()
         if delay > 0:
             await asyncio.sleep(delay)
         while True:
@@ -107,7 +108,11 @@ class SCOAudio:
                 written = self.sock.send(packet)
                 if written != len(packet):
                     raise ConnectionError("partial SCO packet write")
-                self.playout_until = max(loop.time(), self.playout_until) + duration
+                now = loop.time()
+                # Anchor packet pacing so timer overshoot does not accumulate.
+                # After a stall allow at most one packet of catch-up.
+                self.send_at = max(self.send_at, now - duration) + duration
+                self.playout_until = max(now, self.playout_until) + duration
                 return
             except BlockingIOError:
                 ready = loop.create_future()

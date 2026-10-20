@@ -147,13 +147,13 @@ function loadVoices() {
   select.disabled = false;
   const available = [...new Set([...(voices[model.provider] || []), model.voice].filter(Boolean))];
   for (const voice of available) select.add(new Option(voice + (voice === model.voice ? '（默认）' : ''), voice));
-  const preferred = chosenVoices.get(model.provider) || model.voice;
+  const preferred = chosenVoices.get(model.model) || model.voice;
   select.value = available.includes(preferred) ? preferred : available[0];
 }
 form.elements.model.onchange = () => { loadVoices(); run(saveCallDefaults); };
 form.elements.voice.onchange = () => {
   const model = selectedModel();
-  if (model) chosenVoices.set(model.provider, form.elements.voice.value);
+  if (model) chosenVoices.set(model.model, form.elements.voice.value);
   run(saveCallDefaults);
 };
 form.elements.max_call_seconds.onchange = () => run(saveCallDefaults);
@@ -171,7 +171,7 @@ async function saveCallDefaults() {
     const body = settings.saved;
     body.service.default_max_call_seconds = duration;
     body.provider = {...current, provider:chosen.provider, model:chosen.model, voice:chosen.voice,
-      options:chosen.provider === current.provider ? current.options : chosen.options};
+      options:chosen.provider === current.provider && chosen.model === current.model ? current.options : chosen.options};
     const result = await api('/settings', 'PUT', body);
     selected.voice = chosen.voice; selected.options = result.active.provider.options;
     if (request === defaultsRequest) {
@@ -189,7 +189,8 @@ async function loadModels() {
   const data = await api('/settings'); const active = data.active.provider;
   form.elements.max_call_seconds.value = data.active.service.default_max_call_seconds ?? 300;
   models = [
-    {...(active.provider === 'openai' ? active : {provider:'openai', model:'gpt-realtime-2.1', voice:'marin', options:{}})},
+    {...(active.provider === 'openai' && active.model !== 'gpt-live-1' ? active : {provider:'openai', model:'gpt-realtime-2.1', voice:'marin', options:{}})},
+    {...(active.provider === 'openai' && active.model === 'gpt-live-1' ? active : {provider:'openai', model:'gpt-live-1', voice:'marin', options:{}})},
     {...(active.provider === 'gemini' ? active : {provider:'gemini', model:'gemini-3.8-live', voice:'Aoede', options:{}})}
   ];
   form.elements.model.replaceChildren();
@@ -198,7 +199,7 @@ async function loadModels() {
     const option = new Option(`${model.provider === 'openai' ? 'OpenAI' : 'Gemini'} · ${model.model}${available ? '' : '（未配置 API Key）'}`, String(index));
     option.disabled = !available; form.elements.model.add(option);
   }
-  const selected = models.findIndex(model => model.provider === active.provider && data.credentials[model.provider]);
+  const selected = models.findIndex(model => model.provider === active.provider && model.model === active.model && data.credentials[model.provider]);
   form.elements.model.value = String(selected >= 0 ? selected : models.findIndex(model => data.credentials[model.provider]));
   loadVoices();
   $('#start-call').disabled = !models.some(model => data.credentials[model.provider]);

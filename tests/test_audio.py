@@ -103,3 +103,38 @@ async def test_audio_prime_retains_first_pcm_and_counts_it_once():
     finally:
         audio.close()
         peer.close()
+
+
+async def test_packet_pacing_does_not_accumulate_timer_overshoot(monkeypatch):
+    from types import SimpleNamespace
+
+    from agentcall.audio import transport
+
+    clock = SimpleNamespace(now=100.0)
+
+    async def sleep(delay):
+        clock.now += delay + 0.001
+
+    monkeypatch.setattr(
+        transport,
+        "asyncio",
+        SimpleNamespace(
+            get_running_loop=lambda: SimpleNamespace(time=lambda: clock.now),
+            sleep=sleep,
+        ),
+    )
+    audio = object.__new__(SCOAudio)
+    audio.sock = SimpleNamespace(send=lambda packet: len(packet))
+    audio.send_at = audio.playout_until = 0.0
+    for _ in range(500):
+        await audio.send_packet(bytes(160), 0.01)
+    assert clock.now == pytest.approx(104.981, abs=0.011)
+    assert audio.playout_until >= clock.now + 0.009
+    assert audio.playout_until - clock.now < 0.021
+    # Long scheduling stalls must not trigger an unlimited burst of old packets.
+    clock.now += 10
+    await audio.send_packet(bytes(160), 0.01)
+    await audio.send_packet(bytes(160), 0.01)
+    before = clock.now
+    await audio.send_packet(bytes(160), 0.01)
+    assert clock.now - before >= 0.009

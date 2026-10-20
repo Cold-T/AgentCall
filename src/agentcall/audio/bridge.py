@@ -28,7 +28,11 @@ class AudioBridge:
         self.output = PCMResampler(provider.output_rate, audio.rate)
         # Never wait for realtime playout in the provider event reader. Bound both bytes and items.
         self.queue = asyncio.Queue(maxsize=4096)
-        self.max_pending_bytes = provider.output_rate * 2 * 60
+        self.continuous_audio = bool(getattr(provider, "continuous_audio", False))
+        self.max_playback_ms = 2000 if self.continuous_audio else None
+        self.max_pending_bytes = provider.output_rate * 2 * (2 if self.continuous_audio else 60)
+        self.active_bytes = 0
+        self.playback_high_water_ms = 0.0
         self.generation = 0
         self.items = {}
         self.playing = None
@@ -44,20 +48,80 @@ class AudioBridge:
                 self.received_bytes += len(pcm)
 
     async def enqueue(self, pcm, response_id=None, item_id=None, content_index=0):
+        if len(pcm) % 2:
+            raise ValueError("PCM requires whole 16-bit samples")
+        projected_ms = self.playback_latency_ms() + len(pcm) * 1000 / (
+            self.provider.output_rate * 2
+        )
+        if self.continuous_audio and projected_ms > self.max_playback_ms:
+            raise RuntimeError(
+                "continuous model audio exceeded the bounded playback backlog (2000ms)"
+            )
         if self.pending_bytes + len(pcm) > self.max_pending_bytes:
             raise RuntimeError("model audio exceeded the bounded playback backlog")
-        key = (response_id, item_id, content_index)
-        item = self.items.setdefault(key, {"generated": 0, "tx_start": None, "tx_end": None})
-        item["generated"] += len(pcm)
+        key = None if self.continuous_audio else (response_id, item_id, content_index)
+        if not self.continuous_audio:
+            item = self.items.setdefault(key, {"generated": 0, "tx_start": None, "tx_end": None})
+            item["generated"] += len(pcm)
         self.pending_bytes += len(pcm)
         try:
             self.queue.put_nowait((self.generation, key, pcm))
+            self.playback_high_water_ms = max(self.playback_high_water_ms, projected_ms)
         except BaseException:
             self.pending_bytes -= len(pcm)
             raise
 
     async def finish_response(self, response_id=None):
+        if not self.continuous_audio:
+            await self.finish_stream(response_id)
+
+    async def finish_stream(self, response_id=None):
+        """Flush a known finite PCM boundary, independent of provider turn events."""
         self.queue.put_nowait((self.generation, response_id, None))
+
+    async def play_clip(self, pcm):
+        """Play finite provider-rate PCM and its tail; caller must gate live output.
+
+        The output_loop must be running. A concurrent interrupt cancels this clip
+        and returns False, allowing a pending hangup to be withdrawn.
+        """
+        if len(pcm) % 2:
+            raise ValueError("PCM requires whole 16-bit samples")
+        generation = self.generation
+        # Preserve the answer already queued before the finite farewell.
+        await self.finish_stream()
+        await self.drained()
+        if generation != self.generation:
+            return False
+        size = max(2, self.provider.output_rate // 10 * 2)
+        for offset in range(0, len(pcm), size):
+            if generation != self.generation:
+                return False
+            await self.enqueue(pcm[offset : offset + size])
+            await self.queue.join()
+        if generation != self.generation:
+            return False
+        await self.finish_stream()
+        await self.drained()
+        return generation == self.generation
+
+    def playback_latency_ms(self):
+        # Transport owns the active chunk; do not count it in both queues.
+        queued = max(0, self.pending_bytes - self.active_bytes)
+        transport = getattr(self.audio, "pending_bytes", 0) + len(
+            getattr(self.audio, "tx_buffer", b"")
+        )
+        try:
+            now = asyncio.get_running_loop().time()
+            playout = max(0, self.audio.playout_until - now) * 1000
+        except RuntimeError:
+            playout = 0
+        return (
+            queued * 1000 / (self.provider.output_rate * 2)
+            + transport * 1000 / (self.audio.rate * 2)
+            + self.output.delay_ms()
+            + playout
+        )
 
     async def interrupt(self):
         self.generation += 1
@@ -120,14 +184,16 @@ class AudioBridge:
                         self.items = {k: v for k, v in self.items.items() if k[0] != key}
                         self.playing = None
                 else:
+                    self.active_bytes = len(pcm)
                     self.playing = key
-                    item = self.items[key]
+                    item = self.items.get(key)
                     converted = self.output.convert(pcm)
                     if converted:
                         await self.write(converted, item)
             finally:
                 if pcm is not None:
                     self.pending_bytes -= len(pcm)
+                    self.active_bytes = 0
                 self.queue.task_done()
 
     async def drained(self):
@@ -150,6 +216,10 @@ class AudioBridge:
                 "to_rate": self.audio.rate,
                 "resampler_pending_ms": self.output.delay_ms(),
             },
+            "continuous_audio": self.continuous_audio,
+            "playback_latency_ms": self.playback_latency_ms(),
+            "playback_high_water_ms": self.playback_high_water_ms,
+            "max_playback_ms": self.max_playback_ms,
             "pending_ms": self.pending_bytes * 1000 / (self.provider.output_rate * 2),
             "model_input_bytes": self.received_bytes,
             "sco_output_bytes": self.sent_bytes,

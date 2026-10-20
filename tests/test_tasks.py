@@ -214,7 +214,10 @@ class Rig:
                         "delta": base64.b64encode(b"\x01\x02" * 2400).decode(),
                     }
                 )
-            await tool("hangup1", "hangup", {"reason": "Task finished"})
+            if self.mode != "auto_hangup":
+                await tool("hangup1", "hangup", {"reason": "Task finished"})
+            else:
+                await self.closing_release.wait()
         await send({"type": "response.done", "response": {"id": "r1", "status": "completed"}})
 
     def setup_audio(self, device):
@@ -376,7 +379,10 @@ class GeminiRig(Rig):
                         }
                     }
                 )
-            await tool("hangup1", "hangup", {"reason": "Task finished"})
+            if self.mode != "auto_hangup":
+                await tool("hangup1", "hangup", {"reason": "Task finished"})
+            else:
+                await self.closing_release.wait()
             if self.mode == "silent_hangup":
                 await self.closing_release.wait()
                 await send(
@@ -547,8 +553,10 @@ async def test_same_device_queued_tasks_and_idempotent_retries(rig):
         ).status_code == 202
     second = await create_start(rig)
     assert rig.store.task(second)["state"] == "queued"
-    await completed(rig, first)
-    await completed(rig, second)
+    first_result = await completed(rig, first)
+    second_result = await completed(rig, second)
+    assert first_result["outcome"] == "completed", first_result
+    assert second_result["outcome"] == "completed", second_result
     assert rig.phone.commands.count("ATD123;") == 2
     assert len(rig.session_configs) == 2
     assert not rig.backend.claims
@@ -977,3 +985,35 @@ async def test_reset_audio_retry_is_bounded_and_does_not_redial(rig, monkeypatch
     assert result["outcome"] == "audio_failed"
     assert sum(command.startswith("ATD") for command in rig.phone.commands) == 1
     assert not rig.output
+
+
+@pytest.mark.parametrize("interrupt", [False, True])
+async def test_finish_without_hangup_waits_for_closing_and_can_be_revoked(rig, interrupt):
+    rig.mode = "auto_hangup"
+    rig.backend.config.answer_timeout_seconds = 1
+    rig.backend.config.audio_timeout_seconds = 1
+    task_id = await create_start(rig, payload(max_call_seconds=4))
+    await wait_for(lambda: len(rig.output) >= 4000)
+    assert "AT+CHUP" not in rig.phone.commands
+    if interrupt:
+        ws = rig.model_sockets[-1]
+        event = (
+            {"type": "input_audio_buffer.speech_started"}
+            if rig.provider == "openai"
+            else {"serverContent": {"interrupted": True}}
+        )
+        await ws.send(json.dumps(event))
+        await wait_for(lambda: rig.store.task(task_id)["model_result"] is None)
+    rig.closing_release.set()
+    if interrupt:
+        await asyncio.sleep(0.1)
+        assert "AT+CHUP" not in rig.phone.commands
+        assert rig.store.task(task_id)["state"] == "in_call"
+        await rig.client.post(f"/tasks/{task_id}/cancel")
+        await completed(rig, task_id)
+    else:
+        result = await completed(rig, task_id)
+        assert result["outcome"] == "completed", result["error"]
+        assert rig.hangup_output_sizes and rig.hangup_output_sizes[0] == 4800
+        tools = (await rig.client.get(f"/tasks/{task_id}/tools")).json()
+        assert [t["name"] for t in tools] == ["send_dtmf", "finish_task"]
