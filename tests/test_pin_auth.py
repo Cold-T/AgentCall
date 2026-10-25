@@ -15,7 +15,7 @@ set_pin = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(set_pin)
 
 
-async def test_pin_bearer_basic_failure_limit_and_client_isolation(service, monkeypatch):
+async def test_pin_bearer_failure_limit_and_client_isolation(service, monkeypatch):
     backend, _, _, _, _ = service
     backend.config.pin_auth = True
     monkeypatch.setenv("AGENTCALL_TOKEN", "0123")
@@ -24,19 +24,17 @@ async def test_pin_bearer_basic_failure_limit_and_client_isolation(service, monk
     app = create_app(backend.config, backend)
     transport = httpx.ASGITransport(app=app, client=("192.0.2.1", 123))
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        assert (await client.get("/health", auth=("pin", "0123"))).status_code == 200
         good = {"Authorization": "Bearer 0123"}
         assert (await client.get("/health", headers=good)).status_code == 200
         schema = (await client.get("/openapi.json", headers=good)).json()
-        assert schema["components"]["securitySchemes"]["PinBasic"]["scheme"] == "basic"
+        assert "PinBasic" not in schema["components"]["securitySchemes"]
         assert schema["paths"]["/health"]["get"]["security"] == [
             {"BearerAuth": []},
-            {"PinBasic": []},
         ]
         for _ in range(10):
             response = await client.get("/devices", headers={"Authorization": "Basic !!!"})
             assert response.status_code == 401
-            assert response.headers["www-authenticate"].startswith("Basic ")
+            assert response.headers["www-authenticate"] == "Bearer"
             assert "0123" not in response.text
         blocked = await client.get("/health", headers=good)
         assert blocked.status_code == 429 and blocked.headers["retry-after"] == "60"
@@ -47,7 +45,7 @@ async def test_pin_bearer_basic_failure_limit_and_client_isolation(service, monk
         assert (await client.get("/health", headers=good)).status_code == 200
 
 
-async def test_basic_mutations_require_csrf_and_bearer_remains_compatible(service, monkeypatch):
+async def test_basic_is_rejected_and_bearer_remains_compatible(service, monkeypatch):
     backend = service[0]
     backend.config.pin_auth = True
     monkeypatch.setenv("AGENTCALL_TOKEN", "0123")
@@ -59,16 +57,12 @@ async def test_basic_mutations_require_csrf_and_bearer_remains_compatible(servic
             {},
             {"Origin": "http://test"},
             {"Origin": "https://evil.test", "X-AgentCall-CSRF": "1"},
+            {"Origin": "http://test", "X-AgentCall-CSRF": "1"},
         ):
             response = await client.post("/discovery/start", auth=("pin", "0123"), headers=headers)
-            assert response.status_code == 403
+            assert response.status_code == 401
         assert not service[4]
-        response = await client.post(
-            "/discovery/start",
-            auth=("pin", "0123"),
-            headers={"Origin": "http://test", "X-AgentCall-CSRF": "1"},
-        )
-        assert response.status_code == 200
+        assert (await client.get("/health", auth=("pin", "0123"))).status_code == 401
         response = await client.post(
             "/discovery/stop",
             headers={"Authorization": "Bearer 0123"},

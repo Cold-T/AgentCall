@@ -16,7 +16,7 @@ from fastapi import (
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
-from fastapi.security import HTTPBasic, HTTPBearer
+from fastapi.security import HTTPBearer
 from pydantic import BaseModel, Field
 from starlette.requests import HTTPConnection
 
@@ -57,11 +57,6 @@ class Confirmation(BaseModel):
 
 
 class ConnectionBearer(HTTPBearer):
-    async def __call__(self, request: HTTPConnection):
-        return await super().__call__(request)
-
-
-class ConnectionBasic(HTTPBasic):
     async def __call__(self, request: HTTPConnection):
         return await super().__call__(request)
 
@@ -113,12 +108,7 @@ def create_app(config=None, backend=None, task_manager=None):
         lifespan=lifespan,
         description="Headless phone calls and AI tasks. Bearer authentication is required when configured. "
         "AT acceptance and model completion are separate from actual phone state.",
-        dependencies=[Depends(ConnectionBearer(auto_error=False, scheme_name="BearerAuth"))]
-        + (
-            [Depends(ConnectionBasic(auto_error=False, scheme_name="PinBasic"))]
-            if config.pin_auth
-            else []
-        ),
+        dependencies=[Depends(ConnectionBearer(auto_error=False, scheme_name="BearerAuth"))],
     )
     app.state.backend = backend
     app.state.tasks = task_manager
@@ -132,10 +122,7 @@ def create_app(config=None, backend=None, task_manager=None):
             response = await call_next(request)
         else:
             if (
-                (
-                    sessions.valid(request)
-                    or request.headers.get("authorization", "").startswith("Basic ")
-                )
+                sessions.valid(request)
                 and not authorized(
                     request.headers.get("authorization"), config.token, pin_auth=False
                 )
@@ -166,13 +153,7 @@ def create_app(config=None, backend=None, task_manager=None):
                     else "Bearer token required"
                 },
                 status_code=status,
-                headers={"Retry-After": str(retry)}
-                if retry
-                else {
-                    "WWW-Authenticate": 'Basic realm="AgentCall PIN", charset="UTF-8"'
-                    if config.pin_auth and request.headers.get("X-AgentCall-CSRF") != "1"
-                    else "Bearer"
-                },
+                headers={"Retry-After": str(retry)} if retry else {"WWW-Authenticate": "Bearer"},
             )
         return await call_next(request)
 
@@ -495,10 +476,9 @@ def create_app(config=None, backend=None, task_manager=None):
 
     @app.websocket("/calls/{call_id}/audio")
     async def audio_socket(websocket: WebSocket, call_id: str):
-        if (
-            sessions.valid(websocket)
-            or websocket.headers.get("authorization", "").startswith("Basic ")
-        ) and (not websocket.headers.get("origin") or not same_origin(websocket)):
+        if sessions.valid(websocket) and (
+            not websocket.headers.get("origin") or not same_origin(websocket)
+        ):
             await websocket.close(code=1008)
             return
         if check_auth(websocket)[0] != 200:

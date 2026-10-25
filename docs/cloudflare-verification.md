@@ -1,5 +1,7 @@
 # 固定 PIN 公网部署验证
 
+> 后续变更：HTTP Basic PIN 认证已移除；下文 Basic 验证仅为历史记录。现有 Bearer 凭据及网页会话保留。
+
 日期：2026-10-06（America/Chicago）。域名 `agentcall.coldt.uk`，复用现有 vaultwarden Tunnel；`vw.coldt.uk` 保持原回源和正常 HTTP 200。
 
 ## 部署

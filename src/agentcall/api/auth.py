@@ -1,7 +1,5 @@
 """Bounded per-client authentication failure windows for fixed PIN access."""
 
-import base64
-import binascii
 import hmac
 import math
 from collections import OrderedDict, deque
@@ -41,13 +39,4 @@ class FailedAuthLimiter:
 def authorized(header, token, pin_auth=False):
     if not token:
         return not pin_auth
-    if hmac.compare_digest((header or "").encode(), f"Bearer {token}".encode()):
-        return True
-    if pin_auth and (header or "").startswith("Basic "):
-        try:
-            credentials = base64.b64decode(header[6:], validate=True).decode("utf-8")
-            username, password = credentials.split(":", 1)
-            return username == "pin" and hmac.compare_digest(password.encode(), token.encode())
-        except (ValueError, binascii.Error):
-            return False
-    return False
+    return hmac.compare_digest((header or "").encode(), f"Bearer {token}".encode())

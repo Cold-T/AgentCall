@@ -54,8 +54,8 @@ async def test_audio_handshake_disconnect_releases_owner(service, failure_stage)
         backend.audio.pop(DEVICE)
 
 
-@pytest.mark.parametrize("origin", [None, "https://evil.test"])
-async def test_basic_audio_rejects_missing_or_foreign_origin(service, monkeypatch, origin):
+@pytest.mark.parametrize("origin", [None, "https://evil.test", "http://test"])
+async def test_basic_audio_is_rejected_regardless_of_origin(service, monkeypatch, origin):
     backend = service[0]
     backend.config.pin_auth = True
     test_pin = "0123"
@@ -77,6 +77,7 @@ async def test_basic_audio_rejects_missing_or_foreign_origin(service, monkeypatc
     websocket = SimpleNamespace(
         headers=headers,
         cookies={},
+        client=SimpleNamespace(host="test"),
         url=SimpleNamespace(scheme="ws"),
         close=close,
     )

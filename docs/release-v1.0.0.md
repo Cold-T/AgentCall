@@ -1,5 +1,7 @@
 # v1.0.0 release review
 
+> 后续变更：HTTP Basic PIN 认证已移除；下文 Basic 验证仅为历史记录。现有 Bearer 凭据及网页会话保留。
+
 Review date: 2026-10-06. Five subagents reviewed Bluetooth/audio, task/provider lifecycle, API security, storage/CLI/web clients, and release/licensing. The primary agent completed interrupted fixes and final verification. This is a source and software release review; it does not expand the recorded real-phone acceptance scope.
 
 ## Findings and resolution

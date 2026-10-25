@@ -90,9 +90,9 @@ curl -H "Authorization: Bearer $AGENTCALL_TOKEN" \
   'http://127.0.0.1:8765/events/history?after_id=0&limit=100'
 ```
 
-401 返回 WWW-Authenticate: Bearer（PIN 模式为 Basic）；业务 HTTP、SSE、OpenAPI / docs 和音频 WebSocket 均受认证保护。OpenAI / Gemini 凭据不返回客户端。认证后可读写非秘密服务配置，见 [网页设置与会话 API](web-ui.md)。真实 API 和真机兼容性验收边界见 checkpoint 验证记录。
+401 返回 WWW-Authenticate: Bearer；业务 HTTP、SSE、OpenAPI / docs 和音频 WebSocket 均受认证保护。OpenAI / Gemini 凭据不返回客户端。认证后可读写非秘密服务配置，见 [网页设置与会话 API](web-ui.md)。真实 API 和真机兼容性验收边界见 checkpoint 验证记录。
 
-API 创建任务无需填写 `background`；省略时使用后台默认通话说明，显式填写时使用该内容替换说明，空字符串表示清空。网页预填写同一默认说明，允许修改；修改只影响本次通话。PIN 即 API token，Bearer / Basic 客户端不需要先登录或换取其他 token。
+API 创建任务无需填写 `background`；省略时使用后台默认通话说明，显式填写时使用该内容替换说明，空字符串表示清空。网页预填写同一默认说明，允许修改；修改只影响本次通话。PIN 即 API token，Bearer 客户端不需要先登录或换取其他 token。
 
 ## 下载通话资料
 
@@ -115,4 +115,4 @@ API 创建任务无需填写 `background`；省略时使用后台默认通话说
 
 ## 浏览器认证与跨站保护
 
-使用网页会话 cookie 或 HTTP Basic 的写请求（POST / PUT / PATCH / DELETE）必须携带 `X-AgentCall-CSRF: 1`；提供 `Origin` 时必须与服务同源。缺少标记或跨站请求返回 403。Cookie / Basic 音频 WebSocket 必须携带同源 `Origin`。显式 Bearer 客户端不需要 CSRF 标记；CLI 和自动化客户端推荐使用 Bearer，Swagger 的写操作也可选择 Bearer。
+使用网页会话 cookie 的写请求（POST / PUT / PATCH / DELETE）必须携带 `X-AgentCall-CSRF: 1`；提供 `Origin` 时必须与服务同源。缺少标记或跨站请求返回 403。Cookie 音频 WebSocket 必须携带同源 `Origin`。显式 Bearer 客户端不需要 CSRF 标记；CLI 和自动化客户端推荐使用 Bearer，Swagger 的写操作也可选择 Bearer。

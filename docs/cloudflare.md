@@ -4,7 +4,7 @@
 
 - `/`：PIN 登录页；认证后显示最简操作网页，见 [网页说明](web-ui.md)。
 - `/api/`：全部业务 API，固定 PIN 认证。
-- `/api/docs`：API 文档；网页登录后可直接访问，也支持 Basic 用户名 `pin` / 密码 PIN。
+- `/api/docs`：API 文档；网页登录后可直接访问，也支持 Bearer PIN。
 - `/api/events`：SSE；`/api/calls/{id}/audio`：双向音频 WebSocket，均验证 PIN。
 
 ## 设置与轮换 PIN
@@ -18,7 +18,7 @@ cd ~/AgentCall
 
 PIN 严格使用 4 个 ASCII 数字，支持前导零；启动、设置接口和网页表单使用相同长度约束。当前部署已生成新的随机 4 位 PIN，保存在上述私有文件中，旧的 6 位 PIN 已失效。
 
-配置 `[service]` 设置 `pin_auth=true`、`token_env="AGENTCALL_TOKEN"`、`root_path="/api"`，保持 loopback 监听。PIN 缺失或格式错误时服务启动失败，不允许空 PIN 开放 API。API 接受 `Authorization: Bearer PIN`，或 HTTP Basic 用户名 `pin` / 密码 PIN。每个客户端 IP 在 60 秒内累计 10 次错误认证后暂时返回 429 和 Retry-After；被限流期间正确 PIN 也需等待窗口结束。错误观察缓存最多保留 1024 个客户端，内存状态在重启后清空；不是分布式账号系统。
+配置 `[service]` 设置 `pin_auth=true`、`token_env="AGENTCALL_TOKEN"`、`root_path="/api"`，保持 loopback 监听。PIN 缺失或格式错误时服务启动失败，不允许空 PIN 开放 API。API 接受 `Authorization: Bearer PIN`；不再接受 HTTP Basic 认证。每个客户端 IP 在 60 秒内累计 10 次错误认证后暂时返回 429 和 Retry-After；被限流期间正确 PIN 也需等待窗口结束。错误观察缓存最多保留 1024 个客户端，内存状态在重启后清空；不是分布式账号系统。
 
 ## 主机与 Tunnel 部署
 
@@ -33,9 +33,6 @@ PIN 严格使用 4 个 ASCII 数字，支持前导零；启动、设置接口和
 ## 请求示例
 
 ```bash
-# curl 会提示输入 PIN，不要把 PIN 直接放进命令行。
-curl --fail -u pin https://agentcall.coldt.uk/api/health
-
 # 本机 CLI：加载已设置的私有环境变量。
 set -a
 . ~/.config/agentcall/pin.env

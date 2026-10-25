@@ -1,5 +1,7 @@
 # 最简网页验证
 
+> 后续变更：HTTP Basic PIN 认证已移除；下文 Basic 验证仅为历史记录。现有 Bearer 凭据及网页会话保留。
+
 日期：2026-10-06（America/Chicago）。生产入口 `https://agentcall.coldt.uk`，沿用固定 PIN、Cloudflare Tunnel 和 loopback nginx Gateway。
 
 ## 自动验证
